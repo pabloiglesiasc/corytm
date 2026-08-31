@@ -17,9 +17,9 @@ check-frontend:
 	cd src/frontend/desktop && npm run lint
 
 check-native:
-	cmake -S src/backend/audio -B src/backend/audio/build -G Ninja
-	cmake --build src/backend/audio/build
-	ctest --test-dir src/backend/audio/build --output-on-failure
+	cmake -S src/backend/audio -B src/backend/audio/build
+	cmake --build src/backend/audio/build --config Release
+	ctest --test-dir src/backend/audio/build --output-on-failure -C Release
 
 clean:
 	rm -rf src/backend/core/.venv

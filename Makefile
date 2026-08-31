@@ -1,6 +1,6 @@
-.PHONY: check check-all check-python check-frontend check-native clean
+.PHONY: check check-all check-python check-frontend check-desktop check-native clean
 
-check: check-python check-frontend check-native
+check: check-python check-frontend check-desktop check-native
 
 check-all: clean check
 
@@ -16,6 +16,9 @@ check-frontend:
 	cd src/frontend/desktop && npm run test
 	cd src/frontend/desktop && npm run lint
 
+check-desktop:
+	cd src/frontend/desktop && npm run tauri build
+
 check-native:
 	cmake -S src/backend/audio -B src/backend/audio/build
 	cmake --build src/backend/audio/build --config Release
@@ -24,4 +27,5 @@ check-native:
 clean:
 	rm -rf src/backend/core/.venv
 	rm -rf src/frontend/desktop/node_modules
+	rm -rf src/frontend/desktop/src-tauri/target
 	rm -rf src/backend/audio/build

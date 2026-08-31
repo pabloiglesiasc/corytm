@@ -1,0 +1,120 @@
+# CLAUDE.md — Corytm Repository Constitution
+
+This document defines the global rules every Claude Code session in this repository must obey. It is loaded every session, so it stays compact: stable rules only, pointing to canonical artifacts (specs, decisions, docs, skills, memory) once they exist rather than duplicating their content. Present tense states a rule binding now; "once X exists" marks a rule whose mechanism has not been built yet. This document may only be modified with explicit user approval (§5).
+
+## 1. Identity & Lifecycle
+
+Corytm (corytm.ai) is an agent-native professional music production environment. Its in-product agent is Dorian, exposed to users through three product-level model tiers — Allegro, Virtuoso, Maestro — decoupled from whatever LLM providers implement them.
+
+All repository content is written in English: code, tests, docs, specs, decisions, project-management artifacts, skills, memory. Conversational language with the user never leaks into repository artifacts.
+
+Current lifecycle phase: **Pre-alpha** — build the factory. No Corytm production functionality may be implemented (e.g. tracks, clips, notes, Dorian product behavior, or audio playback). Pre-alpha exists to establish repository foundation, governance, and engineering quality gates. The full lifecycle model beyond this restriction is the future PMO system's content.
+
+## 2. Architecture Law
+
+Python knows what the project means musically. C++ knows how to make it sound.
+
+- **Corytm Engine** (`src/backend/core/modules/engine`) owns Corytm's canonical musical/project state.
+- **Native Audio Runtime** (`src/backend/audio`) owns low-level audio execution, built on Tracktion Engine + JUCE. Never call it "the audio engine" — that name is reserved for Corytm Engine and creates ambiguity with Tracktion Engine.
+- **Tracktion Engine** is the third-party technology inside the Native Audio Runtime — a runtime projection of canonical Python state, never the source of truth. Runtime state must eventually be rebuildable from canonical Python state on restart.
+
+Conceptually: Dorian → Corytm Engine → Runtime → Native Audio Runtime → Tracktion Engine + JUCE.
+
+Dorian operates only through semantic application tools and services. It must never generate C++ as an execution mechanism, make arbitrary Tracktion calls, bypass application/domain boundaries, or execute arbitrary shell commands as a normal product capability. Human UI actions and Dorian actions must eventually go through the same application/domain API.
+
+## 3. Ownership
+
+| Universe | Owns | Governs |
+|---|---|---|
+| PMO | `docs/project/**`, `docs/product/**`, `README.md` | Lifecycle, roadmap, milestones/epics/features/tasks |
+| CPO | `specs/**`, `decisions/**` | What Corytm should do and why; product coherence |
+| CTO/Architecture | `docs/technical/**` | System architecture, cross-cutting boundaries |
+| CTO/Platform | `src/backend/core/deploys/**`, `.github/**` | Build, release, security, CI infrastructure |
+| CTO/Backend | `src/backend/core/api/**`, `src/backend/core/modules/engine/**` | Corytm Engine, API |
+| CTO/AI & Sound | `src/backend/core/modules/dorian/**`, `src/backend/core/modules/runtime/**` | Dorian, Runtime |
+| CTO/Frontend | `src/frontend/**` | Frontend |
+| CTO/Sound Backend | `src/backend/audio/**` | Native Audio Runtime |
+| CoS | none (consultative) | Strategy, finance, legal, licensing, pricing, fundraising |
+
+Ownership means primary responsibility and expected expertise — not a filesystem ACL, not exclusive authorship. A Task may cross ownership areas; one session may activate multiple responsibilities without spawning permanent per-role subagents.
+
+These universes are responsibility roles, not skills. Skills (future, under `.claude/skills/`) are reusable procedures that inherit this document's rules rather than restating them. A Task's declared skills are a starting point, not a whitelist — Claude may activate more as genuinely needed, but skills must never auto-cascade into loading arbitrary other skills.
+
+## 4. Knowledge & Authority
+
+Source-of-truth order, highest first: this document → approved specs + accepted decisions → Task acceptance criteria → current code and tests → docs → memory. Code and tests reflect current reality but never overrule a higher source. A conflict between higher sources must be surfaced and resolved, never silently decided by picking whatever is convenient.
+
+Each future artifact has exactly one canonical home; others reference it, they do not duplicate it:
+
+- `specs/` — what Corytm must do (prospective and normative; may describe behavior not yet implemented).
+- `decisions/` — why a design was chosen.
+- `docs/product/`, `docs/technical/`, `docs/project/` — what Corytm currently does, how it currently works, and where the project currently stands (descriptive; must reflect current reality, never claim unbuilt behavior).
+- `.claude/memory/` — transient, disposable working context.
+- `.claude/skills/` — how to perform a kind of work.
+
+Desired state minus current state equals remaining work. Synchronize meaning, not files.
+
+## 5. Governance & Escalation
+
+Claude acts autonomously on local, reversible, non-fundamental changes within an approved Task's scope. Explicit user approval is required before:
+
+- Moving responsibilities between primary modules, introducing a new architectural layer, changing the canonical source of truth, changing the Python↔C++ protocol, replacing Tracktion Engine or JUCE, changing the local-first persistence strategy, or altering any other foundational architecture boundary.
+- Introducing a new observable product behavior, requirement, or UX decision that hasn't already been agreed — as opposed to formalizing behavior already agreed, or fixing an ambiguity whose intended meaning is already clear, both of which Claude may do directly.
+- Weakening or loosening any existing quality gate — this is a governance change, not an implementation detail.
+- Modifying this document itself — always, without exception.
+
+Accepted decisions are historical records and must not be rewritten to hide history.
+
+## 6. Delivery & Task Lifecycle
+
+Work decomposes as Milestone (a transversal outcome) and Epic → Feature → Task, with Task the smallest independently executable unit for one clean session. Identifiers are immutable and carry a status once the PMO system exists.
+
+One implementation Task runs at a time. One session executes exactly one Task — it may cross the responsibility handoffs that Task requires, but must not automatically continue to the next independent Task after closing. After closing, Claude may recommend or select the next Task and then stop.
+
+Three interaction modes: **directed** ("implement TK-031" → execute exactly that Task); **autonomous** ("continue development" → select the next ready Task, briefly explain the choice, execute it, close it, recommend the next, stop); **consultative** ("what should we work on next?" → recommend without implementing).
+
+## 7. Task Execution Protocol
+
+Every implementation Task follows: **DISCOVER → PLAN → IMPLEMENT → REVIEW → VALIDATE → SYNC → CLOSE.**
+
+- **Discover** only what the Task needs — this document, project status, the Task, its declared references, needed skills, relevant code — never the whole repository indiscriminately.
+- **Plan** before editing (objective, approach, affected boundaries, expected files, tests, risks, validation). A Task is ready to plan when a fresh session could execute it without an unresolved prior decision. Proceed without asking again if nothing protected (§5) is touched; stop and ask if it is.
+- **Implement** with TDD as the default for behavior changes — understand the expected behavior, write or extend a failing test, confirm the failure, implement minimally, then simplify. Skip TDD for pure docs, trivial config, or genuinely untestable changes. Touch nothing outside the Task's scope; if an unrelated issue must be touched to complete it safely, make the smallest necessary change and keep it explicit — otherwise record it rather than fixing it opportunistically.
+- **Review** the complete change before validating: look for unnecessary complexity, removable or consolidatable code, broken ownership boundaries, duplication, poor naming, premature abstraction, dead code, comments, suppression directives, weakened tests, scope creep, and knowledge drift. Fix what's found.
+- **Validate** using the repository's canonical quality interface once it exists — the normal gate for every Task, the full-repository gate for milestone completion, cross-boundary changes, native-runtime/audio changes, CI/deployment changes, or other globally significant work.
+- **Sync** by assessing whether the Task changed canonical knowledge (specs, decisions, docs, memory, skills, PMO state). "No change required" is a valid outcome — don't update ceremonially.
+- **Close** when the objective and acceptance criteria are met, tests and required quality gates pass, no accidental architectural debt was introduced, and relevant knowledge is synchronized — code existing is not the same as done. Reconcile Task state once PMO exists, then recommend or select the next Task and stop.
+
+## 8. Code Standards
+
+> Fixes should make the system simpler, not more complex. Prefer removing or consolidating code over adding a new layer, flag, or special case. If a fix grows the system's surface area, look for the version that shrinks it.
+
+No abstraction before demonstrated ownership and reuse; prefer temporary local duplication over a premature shared one; never introduce a global `shared`, `common`, `utils`, or `helpers` package. If ownership is unclear, don't abstract yet.
+
+Directories provide context — names should not repeat it (`services/project.py`, not `services/project_service.py`). Prefer concise one-word filenames; don't sacrifice clarity to avoid an underscore.
+
+> Never leave comments in the repo. The standard is zero comments: no explanatory comments or docblocks, TODO/FIXME notes, lint/type suppression directives, or commented-out code. Express intent through names, structure, and tests; put rationale in commit messages or PR descriptions. Interpreter shebangs are executable directives, not comments.
+
+Strong typing from the start of real implementation: Pyright strict (or near-strict) for Python, `strict: true` for TypeScript, strong warnings-as-errors where reasonable for Corytm-owned C++ — none of this is configured yet. Suppression is never a normal way to satisfy a type or lint rule.
+
+Unit tests live with the component that owns the tested behavior; cross-component tests get a dedicated future home. Dependencies are minimal and justified against purpose, alternatives, maintenance, license, security, and runtime/build impact; a foundational structural dependency may need a decision record. Serialized process boundaries use neutral schemas — a Python model, its schema, and a C++ model are three distinct things. Generated artifacts are never the source of truth and are never hand-edited.
+
+Warnings are failures to understand, not noise to suppress — fix the cause. A test is only changed when it demonstrably contradicts current expected behavior or the Task intentionally changes that behavior.
+
+## 9. Security
+
+No secrets in the repository. Least privilege by default. The model proposes actions; trusted application code authorizes and executes them — the security expression of Dorian's operating boundary (§2).
+
+## 10. Permissions & Git
+
+Claude may read the repository, edit files within an approved Task's scope, run tests/linters/type-checks/quality commands once they exist, inspect diffs, and update docs, memory, or skills according to their governance. Claude must never bypass tests, disable CI checks, silently weaken a quality rule, change observable product behavior without authority, or deploy to production without explicit authorization.
+
+Git is stricter still. Claude may inspect git state (`status`, `diff`, `log`, current branch) and edit permitted working-tree files. Claude must never initialize a repository, stage files, commit, push, merge, rewrite history, manage remotes, or modify git configuration. This is a hard prohibition during normal work, not a case-by-case gate — no Task may request a one-off exception. Git administration remains entirely user-controlled; changing this governance itself is possible only through an explicitly approved amendment to this document.
+
+## 11. Knowledge & Harness Governance
+
+Memory is disposable and never authoritative: an observation becomes a memory entry; if it's repeated or validated it gets promoted into a doc, skill, decision, or spec and the memory entry is then removed; otherwise it expires.
+
+Skills are procedures, not facts, and inherit this document rather than restating it. A skill may be created or refined for a concrete, demonstrated, reusable procedural need — never for something this document already covers. Anything that would expand permissions, change governance, or create a new global rule must go through an approved change to this document, never be silently encoded as a skill.
+
+Harness improvement is evidence-driven: implement, notice an issue, find the cause, then route it — a one-off problem is fixed in code or captured in memory when future context would help; a repeated or clearly reusable procedure is a skill candidate; stable project truth belongs in its canonical doc, spec, or decision; and a global governance rule is a proposed change to this document, approved as above.

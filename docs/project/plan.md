@@ -9,10 +9,14 @@ Pre-alpha → Alpha → Beta → Stable.
 - **Beta — make Corytm usable.** Product depth, UX, resiliency, plugins, persistence/recovery, performance, advanced Dorian capabilities, packaging/installers, operational maturity.
 - **Stable — make Corytm dependable.** Compatibility, migrations, backwards compatibility, crash recovery, release guarantees, security/performance budgets, privacy/legal maturity, updates, support.
 
-## Current Phase: Pre-alpha
+## Current Phase: Alpha
 
-Objective: complete the repository, harness, governance, and PMO foundation described above.
-Exit criteria: Pre-alpha is complete when a fresh Claude Code session, with no conversation history, can enter the repository, understand Corytm and its current state, determine the next approved work, load the relevant context and procedures, execute that work under repository governance, validate it through the available quality system, synchronize affected knowledge and project state, and identify or recommend the next work. This describes the capability the foundation must provide by the end of the phase — it does not claim those mechanisms already exist now.
+Objective: establish Corytm's first real end-to-end product paths — user → desktop → Python core → Corytm Engine → Runtime → Native Audio Runtime → Tracktion Engine → sound, and user → Dorian → Corytm Engine → Runtime → sound.
+Exit criteria: Alpha is complete when both paths above are real and demonstrable end-to-end — a user can create or open a project and produce actual sound through the full stack via direct manual editing, and Dorian can perform a real semantic edit through the same governed application path with an observable effect on that sound — without yet claiming the product depth, UX polish, plugin ecosystem, or operational maturity Beta and Stable address.
+
+## Previous Phase: Pre-alpha
+
+Objective was to complete the repository, harness, governance, and PMO foundation. Exit criteria — a fresh Claude Code session, with no conversation history, entering the repository, understanding Corytm and its current state, determining the next approved work, loading the relevant context and procedures, executing that work under repository governance, validating it through the available quality system, synchronizing affected knowledge and project state, and identifying or recommending the next work — was demonstrated in practice by MS-001 (see `docs/project/milestones/MS-001.md`) and confirmed complete when the user approved the transition to Alpha.
 
 ## Rolling-Wave Planning
 

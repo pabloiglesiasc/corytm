@@ -8,7 +8,7 @@ Corytm (corytm.ai) is an agent-native professional music production environment.
 
 All repository content is written in English: code, tests, docs, specs, decisions, project-management artifacts, skills, memory. Conversational language with the user never leaks into repository artifacts.
 
-Current lifecycle phase: **Pre-alpha** — build the factory. No Corytm production functionality may be implemented (e.g. tracks, clips, notes, Dorian product behavior, or audio playback). Pre-alpha exists to establish repository foundation, governance, and engineering quality gates. The full lifecycle model beyond this restriction is the future PMO system's content.
+Current lifecycle phase: **Alpha** (approved 2026-08-31, transitioning from Pre-alpha). Pre-alpha's blanket restriction against implementing Corytm production functionality no longer applies. This phase's Objective and Exit criteria are canonical in `docs/project/plan.md`; every other rule in this document — specs and decisions (§4), and escalation for foundational architecture boundaries (§5) above all — continues to govern exactly as before, and most first Alpha work touches one of those boundaries.
 
 ## 2. Architecture Law
 
@@ -83,7 +83,7 @@ Every implementation Task follows: **DISCOVER → PLAN → IMPLEMENT → REVIEW 
 - **Review** the complete change before validating: look for unnecessary complexity, removable or consolidatable code, broken ownership boundaries, duplication, poor naming, premature abstraction, dead code, comments, suppression directives, weakened tests, scope creep, and knowledge drift. Fix what's found.
 - **Validate** using the repository's canonical quality interface once it exists — the normal gate for every Task, the full-repository gate for milestone completion, cross-boundary changes, native-runtime/audio changes, CI/deployment changes, or other globally significant work.
 - **Sync** by assessing whether the Task changed canonical knowledge (specs, decisions, docs, memory, skills, PMO state). "No change required" is a valid outcome — don't update ceremonially.
-- **Close** when the objective and acceptance criteria are met, tests and required quality gates pass, no accidental architectural debt was introduced, and relevant knowledge is synchronized — code existing is not the same as done. Reconcile Task state once PMO exists, then recommend or select the next Task and stop.
+- **Close** when the objective and acceptance criteria are met, tests and required quality gates pass, no accidental architectural debt was introduced, and relevant knowledge is synchronized — including `README.md` whenever lifecycle, identity, or top-level status changed — and code existing is not the same as done. Reconcile Task state once PMO exists, state plainly that the resulting changes are uncommitted and await human Git action per §10, then recommend or select the next Task and stop.
 
 ## 8. Code Standards
 
@@ -95,7 +95,7 @@ Directories provide context — names should not repeat it (`services/project.py
 
 > Never leave comments in the repo. The standard is zero comments: no explanatory comments or docblocks, TODO/FIXME notes, lint/type suppression directives, or commented-out code. Express intent through names, structure, and tests; put rationale in commit messages or PR descriptions. Interpreter shebangs are executable directives, not comments.
 
-Strong typing from the start of real implementation: Pyright strict (or near-strict) for Python, `strict: true` for TypeScript, strong warnings-as-errors where reasonable for Corytm-owned C++ — none of this is configured yet. Suppression is never a normal way to satisfy a type or lint rule.
+Strong typing from the start of real implementation: Pyright strict (or near-strict) for Python, `strict: true` for TypeScript, strong warnings-as-errors where reasonable for Corytm-owned C++. Pyright strict and TypeScript strict mode are configured and passing; C++ warnings-as-errors is not yet established. Suppression is never a normal way to satisfy a type or lint rule.
 
 Unit tests live with the component that owns the tested behavior; cross-component tests get a dedicated future home. Dependencies are minimal and justified against purpose, alternatives, maintenance, license, security, and runtime/build impact; a foundational structural dependency may need a decision record. Serialized process boundaries use neutral schemas — a Python model, its schema, and a C++ model are three distinct things. Generated artifacts are never the source of truth and are never hand-edited.
 

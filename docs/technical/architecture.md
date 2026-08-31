@@ -1,10 +1,10 @@
 # Corytm Technical Architecture
 
-This document captures Corytm's current accepted technical direction: the major system components, their responsibility boundaries, and what remains intentionally undecided. It describes design direction during Pre-alpha, not implemented behavior — no production functionality exists yet. Statements use "is designed to," "the architecture establishes," or "the intended direction is" rather than describing running behavior.
+This document captures Corytm's current accepted technical direction: the major system components, their responsibility boundaries, and what remains intentionally undecided. It describes design direction, not implemented behavior — no production functionality exists yet. Statements use "is designed to," "the architecture establishes," or "the intended direction is" rather than describing running behavior.
 
 ## System Shape
 
-Corytm's desktop application is designed to consist of three components: a React/TypeScript UI, a Python application core, and a native C++ audio runtime built on Tracktion Engine + JUCE. The exact desktop shell technology is unresolved — Tauri has been considered but is not yet accepted (see Unresolved).
+Corytm's desktop application is designed to consist of three components: a React/TypeScript UI, a Python application core, and a native C++ audio runtime built on Tracktion Engine + JUCE. The UI is packaged and shipped via Tauri 2, which also orchestrates the Python and native-audio process lifecycles. See ADR-006.
 
 ## Foundational Law
 
@@ -49,7 +49,7 @@ Corytm Engine is designed to expose semantic editing operations (illustrative on
 
 ## Python↔C++ Boundary
 
-Python and the native runtime are designed to communicate through a narrow, versioned local protocol; the native runtime is intended to expose a limited application-oriented interface rather than exhaustive bindings to Tracktion Engine. The transport is unresolved (see Unresolved). Shared serialized boundary contracts are intended to eventually live under `src/schemas/`; none exist yet.
+Python and the native runtime are designed to communicate through a narrow, versioned local protocol: commands and events defined as Protobuf messages under `src/schemas/`, carried over a local loopback-socket transport — not exhaustive bindings to Tracktion Engine. The concrete socket/framing implementation is a replaceable detail, independent of the schema and the application boundary. See ADR-007. The actual message definitions do not exist yet (see Unresolved).
 
 ## Dependency Direction
 
@@ -61,4 +61,4 @@ The conceptual source layout separates frontend, backend core (with engine/doria
 
 ## Unresolved
 
-The following remain deliberately open, not settled by this document: the desktop shell technology; the Python↔C++ transport; the persistence implementation; cloud/sync architecture; provider mappings behind Allegro/Virtuoso/Maestro; frontend design-system, component, state-management, and rendering choices; and concrete protocol/schema messages.
+The following remain deliberately open, not settled by this document: the persistence implementation; cloud/sync architecture; provider mappings behind Allegro/Virtuoso/Maestro; frontend design-system, component, state-management, and rendering choices; and the concrete protocol/schema messages carried over the transport ADR-007 establishes.

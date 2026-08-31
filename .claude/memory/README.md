@@ -68,4 +68,4 @@ If memory conflicts with `CLAUDE.md`, an accepted spec, an accepted decision, cu
 
 ## Current state
 
-Zero memory exists. Every prior bootstrap step has been governance and mechanism design, not operational work — nothing has happened yet that would produce a genuine, evidence-anchored observation. The first real entry will come from an actual event during real operational work, not from anticipating one.
+Three memory entries exist, each grounded in a real event encountered during native-build and CI operational work: `cmake-windows-generator.md`, `github-actions-windows-runner.md`, and `tracktion-engine-cmake-integration.md`. Their content is not summarized here — per this file's own Discovery section, a session finds them progressively, through the current Task's declared references or by identifying relevance during PLAN, not through an index in this file.

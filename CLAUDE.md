@@ -4,7 +4,7 @@ This document defines the global rules every Claude Code session in this reposit
 
 ## 1. Identity & Lifecycle
 
-Corytm (corytm.ai) is an agent-native professional music production environment. Its in-product agent is Dorian, exposed to users through three product-level model tiers — Allegro, Virtuoso, Maestro — decoupled from whatever LLM providers implement them.
+Corytm (corytm.ai) is an AI-native music creation platform — different interfaces, same musical intelligence, spanning Desktop, Web, and Mobile surfaces at different levels of abstraction. Corytm Desktop is the professional agent-native DAW surface, and Alpha's primary technical implementation surface. Its in-product agent is Dorian, exposed to users through three product-level model tiers — Allegro, Virtuoso, Maestro — decoupled from whatever LLM providers implement them. Approved product strategy and business-model direction are canonical in `docs/product/strategy.md` and `docs/product/business-model.md`; this document does not duplicate them.
 
 All repository content is written in English: code, tests, docs, specs, decisions, project-management artifacts, skills, memory. Conversational language with the user never leaks into repository artifacts.
 
@@ -40,15 +40,19 @@ Ownership means primary responsibility and expected expertise — not a filesyst
 
 These universes are responsibility roles, not skills. Skills (future, under `.claude/skills/`) are reusable procedures that inherit this document's rules rather than restating them. A Task's declared skills are a starting point, not a whitelist — Claude may activate more as genuinely needed, but skills must never auto-cascade into loading arbitrary other skills.
 
+CPO Mandate: the CPO continuously evaluates whether technical execution remains aligned with approved product strategy (`docs/product/strategy.md`, `docs/product/business-model.md`) and may proactively propose Features/Epics, challenge priority, or flag misalignment — for example unnecessary coupling of canonical Corytm state to Desktop, weakened provider-agnosticism, cloud/backend work built ahead of need, or unit-economics risk. Strategic reasoning is expected and encouraged; strategic authority is not — a proposal that would change a Protected Product Decision (§5) requires explicit human approval before it changes canonical strategy, PMO direction, or implementation. During Alpha, technical de-risking, architectural leverage, and end-to-end evidence weigh more than commercial immediacy: product/business reasoning is expected to sharpen technical prioritization, not override Corytm's engineering-first bias.
+
 ## 4. Knowledge & Authority
 
-Source-of-truth order, highest first: this document → approved specs + accepted decisions → Task acceptance criteria → current code and tests → docs → memory. Code and tests reflect current reality but never overrule a higher source. A conflict between higher sources must be surfaced and resolved, never silently decided by picking whatever is convenient.
+Source-of-truth order, highest first: this document → approved product strategy + accepted decisions + approved specs → Task acceptance criteria → current code and tests → docs → memory. Product strategy, decisions, and specs govern different domains — product direction, architecture/product rationale, and behavioral contract, respectively — and are reconciled with each other on conflict, never mechanically ranked by which file happens to come first. Code and tests reflect current reality but never overrule a higher source. A conflict between higher sources must be surfaced and resolved, never silently decided by picking whatever is convenient.
 
 Each future artifact has exactly one canonical home; others reference it, they do not duplicate it:
 
+- `docs/product/strategy.md`, `docs/product/business-model.md` — Corytm's approved product category, users, platforms, and business-model direction (prospective and normative at the product-strategy level, distinct from a specs-level behavioral contract); canonical enumeration of Protected Product Decisions (§5). Approved principles are distinguished in-document from open commercial/product hypotheses, which carry no protected standing until accepted.
+- `docs/product/market-intelligence.md` — mutable competitive/market evidence and hypotheses; informs strategy but never overrides it by itself.
 - `specs/` — what Corytm must do (prospective and normative; may describe behavior not yet implemented).
 - `decisions/` — why a design was chosen.
-- `docs/product/`, `docs/technical/`, `docs/project/` — what Corytm currently does, how it currently works, and where the project currently stands (descriptive; must reflect current reality, never claim unbuilt behavior).
+- `docs/product/` (remaining descriptive content), `docs/technical/`, `docs/project/` — what Corytm currently does, how it currently works, and where the project currently stands (descriptive; must reflect current reality, never claim unbuilt behavior).
 - `.claude/memory/` — transient, disposable working context.
 - `.claude/skills/` — how to perform a kind of work.
 
@@ -59,6 +63,7 @@ Desired state minus current state equals remaining work. Synchronize meaning, no
 Claude acts autonomously on local, reversible, non-fundamental changes within an approved Task's scope. Explicit user approval is required before:
 
 - Moving responsibilities between primary modules, introducing a new architectural layer, changing the canonical source of truth, changing the Python↔C++ protocol, replacing Tracktion Engine or JUCE, changing the local-first persistence strategy, or altering any other foundational architecture boundary.
+- Changing a Protected Product Decision — including Corytm's product category, target markets or primary user segments, platform commitments (adding, abandoning, or re-sequencing a platform), go-to-market strategy, monetization/subscription architecture, major pricing or entitlement boundaries, major BYOK commercial-policy changes, major Dorian product-tier or provider-strategy changes, proprietary-model strategy, legal/commercial rights claims, distribution model, major lifecycle-definition changes, or the shared-project/local-first-cloud principles — enumerated canonically in `docs/product/strategy.md` and `docs/product/business-model.md`. Routine implementation inside an already-approved strategy is not automatically protected; when uncertain whether a proposal is protected, surface it for approval rather than deciding silently.
 - Introducing a new observable product behavior, requirement, or UX decision that hasn't already been agreed — as opposed to formalizing behavior already agreed, or fixing an ambiguity whose intended meaning is already clear, both of which Claude may do directly.
 - Weakening or loosening any existing quality gate — this is a governance change, not an implementation detail.
 - Modifying this document itself — always, without exception.
@@ -71,7 +76,7 @@ Work decomposes as Milestone (a transversal outcome) and Epic → Feature → Ta
 
 One implementation Task runs at a time. One session executes exactly one Task — it may cross the responsibility handoffs that Task requires, but must not automatically continue to the next independent Task after closing. After closing, Claude may recommend or select the next Task and then stop.
 
-Three interaction modes: **directed** ("implement TK-031" → execute exactly that Task); **autonomous** ("continue development" → select the next ready Task, briefly explain the choice, execute it, close it, recommend the next, stop); **consultative** ("what should we work on next?" → recommend without implementing).
+Three interaction modes: **directed** ("implement TK-031" → execute exactly that Task); **autonomous** ("continue development" → weigh approved strategy, PMO/technical state, and CPO/CTO alignment proportionally to the decision's size; select the next ready Task; if proceeding would require a Protected Product Decision (§5), propose it with rationale and stop for approval instead; otherwise briefly explain the choice, execute it, close it, recommend the next, stop); **consultative** ("what should we work on next?" → recommend without implementing).
 
 ## 7. Task Execution Protocol
 

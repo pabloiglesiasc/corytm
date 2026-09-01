@@ -6,7 +6,7 @@ Pre-alpha → Alpha → Beta → Stable.
 
 - **Pre-alpha — build the factory.** Establish repository foundation, governance, project management, engineering foundation, product/architecture baseline, CI, and development workflow. No Corytm production functionality is implemented.
 - **Alpha — make Corytm work.** Establish the first real end-to-end product paths, e.g. user → desktop → Python core → Corytm Engine → Runtime → Native Audio Runtime → Tracktion Engine → sound, and user → Dorian → Corytm Engine → Runtime → sound.
-- **Beta — make Corytm usable.** Product depth, UX, resiliency, plugins, persistence/recovery, performance, advanced Dorian capabilities, packaging/installers, operational maturity.
+- **Beta — make Corytm usable.** Product depth, UX, resiliency, plugins, persistence/recovery, performance, advanced Dorian capabilities, packaging/installers, operational maturity, and — per `docs/product/strategy.md`'s platform-expansion direction — beginning to validate Web/Creator workflows ahead of Mobile, without a rigid scope commitment here.
 - **Stable — make Corytm dependable.** Compatibility, migrations, backwards compatibility, crash recovery, release guarantees, security/performance budgets, privacy/legal maturity, updates, support.
 
 ## Current Phase: Alpha

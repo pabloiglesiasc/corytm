@@ -4,7 +4,7 @@ This document captures Corytm's current accepted technical direction: the major 
 
 ## System Shape
 
-Corytm's desktop application is designed to consist of three components: a React/TypeScript UI, a Python application core, and a native C++ audio runtime built on Tracktion Engine + JUCE. The UI is packaged and shipped via Tauri 2, which also orchestrates the Python and native-audio process lifecycles. See ADR-006.
+This document describes Corytm Desktop's architecture specifically — one surface of the broader Corytm platform (`docs/product/strategy.md`). Corytm's desktop application is designed to consist of three components: a React/TypeScript UI, a Python application core, and a native C++ audio runtime built on Tracktion Engine + JUCE. The UI is packaged and shipped via Tauri 2, which also orchestrates the Python and native-audio process lifecycles. See ADR-006.
 
 ## Foundational Law
 
@@ -69,7 +69,7 @@ The conceptual source layout separates frontend, backend core (with engine/doria
 
 ## Structural Evolution
 
-Corytm remains domain-oriented. A module stays flat while its responsibilities are genuinely homogeneous; today's flatness in Engine and Runtime is a consequence of small scope, not a permanent architectural target. As demonstrated, distinct responsibilities emerge within a module, it evolves toward explicit internal ownership boundaries — illustratively, models, services, repositories, adapters/clients, tools, providers, and module-owned tests, drawn from only where those concepts genuinely apply. Restructuring happens when a directory accumulates real heterogeneity, before it grows into a large undifferentiated folder — never merely to resemble this target vocabulary in advance, and never by scaffolding empty or ceremonial directories ahead of the responsibilities that would justify them. This section states direction, not a mandate: `CLAUDE.md` §8's anti-premature-abstraction rule and this document's own authority ordering still govern the actual timing of any restructuring.
+Corytm remains domain-oriented. Per `docs/product/strategy.md`'s Canonical Cross-Platform Project principle, Corytm Engine's canonical model is intended to remain platform-independent — usable by Web/Mobile capability profiles later, not Desktop-specific — even though only Desktop consumes it today; this is forward guidance for future modeling choices, not a restructuring trigger by itself. A module stays flat while its responsibilities are genuinely homogeneous; today's flatness in Engine and Runtime is a consequence of small scope, not a permanent architectural target. As demonstrated, distinct responsibilities emerge within a module, it evolves toward explicit internal ownership boundaries — illustratively, models, services, repositories, adapters/clients, tools, providers, and module-owned tests, drawn from only where those concepts genuinely apply. Restructuring happens when a directory accumulates real heterogeneity, before it grows into a large undifferentiated folder — never merely to resemble this target vocabulary in advance, and never by scaffolding empty or ceremonial directories ahead of the responsibilities that would justify them. This section states direction, not a mandate: `CLAUDE.md` §8's anti-premature-abstraction rule and this document's own authority ordering still govern the actual timing of any restructuring.
 
 Per-area growth direction:
 

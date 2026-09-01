@@ -68,4 +68,4 @@ If memory conflicts with `CLAUDE.md`, an accepted spec, an accepted decision, cu
 
 ## Current state
 
-Four memory entries exist, each grounded in a real event encountered during native-build, CI, and desktop-shell operational work: `cmake-windows-generator.md`, `github-actions-windows-runner.md`, `tracktion-engine-cmake-integration.md`, and `tauri-dmg-stale-mount.md`. Their content is not summarized here — per this file's own Discovery section, a session finds them progressively, through the current Task's declared references or by identifying relevance during PLAN, not through an index in this file.
+Five memory entries exist, each grounded in a real event encountered during native-build, CI, and desktop-shell operational work: `cmake-windows-generator.md`, `github-actions-windows-runner.md`, `tracktion-engine-cmake-integration.md`, `tauri-dmg-stale-mount.md`, and `cargo-path-missing-in-tool-shell.md`. Their content is not summarized here — per this file's own Discovery section, a session finds them progressively, through the current Task's declared references or by identifying relevance during PLAN, not through an index in this file.

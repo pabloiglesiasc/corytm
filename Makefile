@@ -20,6 +20,7 @@ check-frontend:
 
 check-desktop:
 	cd src/frontend/desktop && npm run tauri build
+	cd src/frontend/desktop/src-tauri && cargo test
 
 check-native:
 	cmake -S src/backend/audio -B src/backend/audio/build

@@ -1,13 +1,13 @@
-.PHONY: check check-all check-python check-frontend check-desktop check-native clean
+.PHONY: check check-all check-python check-frontend check-desktop check-native check-transport clean
 
-check: check-python check-frontend check-desktop check-native
+check: check-python check-frontend check-desktop check-native check-transport
 
 check-all: clean check
 
 check-python:
 	mkdir -p src/backend/core/generated
 	cd src/backend/core && uv run python -m grpc_tools.protoc -I ../../schemas --python_out=generated --pyi_out=generated ../../schemas/proof.proto
-	cd src/backend/core && uv run pytest
+	cd src/backend/core && uv run pytest -m "not transport"
 	cd src/backend/core && uv run pyright
 	cd src/backend/core && uv run ruff check .
 	cd src/backend/core && uv run ruff format --check .
@@ -25,6 +25,9 @@ check-native:
 	cmake -S src/backend/audio -B src/backend/audio/build
 	cmake --build src/backend/audio/build --config Release
 	ctest --test-dir src/backend/audio/build --output-on-failure -C Release
+
+check-transport:
+	cd src/backend/core && uv run pytest -m transport
 
 clean:
 	rm -rf src/backend/core/.venv

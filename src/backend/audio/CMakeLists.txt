@@ -64,13 +64,21 @@ add_custom_command(
     ARGS --cpp_out=${proof_schema_generated_dir} -I ${proof_schema_dir} ${proof_schema_dir}/proof.proto
     DEPENDS ${proof_schema_protoc_exe} ${proof_schema_dir}/proof.proto)
 
-add_executable(proof_schema proof_schema.cpp ${proof_schema_generated_dir}/proof.pb.cc)
+add_library(proof_proto STATIC ${proof_schema_generated_dir}/proof.pb.cc)
 
-target_include_directories(proof_schema PRIVATE ${proof_schema_generated_dir})
+target_include_directories(proof_proto PUBLIC ${proof_schema_generated_dir})
 
-target_compile_features(proof_schema PRIVATE cxx_std_17)
+target_compile_features(proof_proto PUBLIC cxx_std_17)
 
-target_link_libraries(proof_schema PRIVATE protobuf::libprotobuf)
+target_link_libraries(proof_proto PUBLIC protobuf::libprotobuf)
+
+add_executable(proof_schema proof_schema.cpp)
+
+target_link_libraries(proof_schema PRIVATE proof_proto)
+
+add_executable(transport_proof transport_proof.cpp)
+
+target_link_libraries(transport_proof PRIVATE proof_proto juce::juce_events)
 
 add_executable(toolchain_proof toolchain_proof.cpp)
 

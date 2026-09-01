@@ -17,6 +17,7 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["generated"]
+markers = ["transport: cross-language proof requiring the native build to already exist (run via check-transport, not check-python)"]
 
 [tool.pyright]
 include = ["tests"]

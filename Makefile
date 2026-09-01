@@ -6,7 +6,7 @@ check-all: clean check
 
 check-python:
 	mkdir -p src/backend/core/generated
-	cd src/backend/core && uv run python -m grpc_tools.protoc -I ../../schemas --python_out=generated --pyi_out=generated ../../schemas/proof.proto
+	cd src/backend/core && uv run python -m grpc_tools.protoc -I ../../schemas --python_out=generated --pyi_out=generated ../../schemas/proof.proto ../../schemas/project.proto
 	cd src/backend/core && uv run pytest -m "not transport"
 	cd src/backend/core && uv run pyright
 	cd src/backend/core && uv run ruff check .

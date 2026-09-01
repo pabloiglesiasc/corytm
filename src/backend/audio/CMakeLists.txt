@@ -76,6 +76,24 @@ add_executable(proof_schema proof_schema.cpp)
 
 target_link_libraries(proof_schema PRIVATE proof_proto)
 
+add_custom_command(
+    OUTPUT ${proof_schema_generated_dir}/project.pb.cc ${proof_schema_generated_dir}/project.pb.h
+    COMMAND ${proof_schema_protoc_exe}
+    ARGS --cpp_out=${proof_schema_generated_dir} -I ${proof_schema_dir} ${proof_schema_dir}/project.proto
+    DEPENDS ${proof_schema_protoc_exe} ${proof_schema_dir}/project.proto)
+
+add_library(project_proto STATIC ${proof_schema_generated_dir}/project.pb.cc)
+
+target_include_directories(project_proto PUBLIC ${proof_schema_generated_dir})
+
+target_compile_features(project_proto PUBLIC cxx_std_17)
+
+target_link_libraries(project_proto PUBLIC protobuf::libprotobuf)
+
+add_executable(project_schema project_schema.cpp)
+
+target_link_libraries(project_schema PRIVATE project_proto)
+
 add_executable(transport_proof transport_proof.cpp)
 
 target_link_libraries(transport_proof PRIVATE proof_proto juce::juce_events)
@@ -96,6 +114,55 @@ target_link_libraries(toolchain_proof PRIVATE
     juce::juce_audio_devices
     juce::juce_audio_utils)
 
+add_library(materializer STATIC materializer.cpp)
+
+target_compile_features(materializer PUBLIC cxx_std_20)
+
+target_compile_definitions(materializer PRIVATE
+    JUCE_USE_CURL=0
+    JUCE_WEB_BROWSER=0
+    JUCE_MODAL_LOOPS_PERMITTED=1)
+
+target_link_libraries(materializer PUBLIC
+    tracktion::tracktion_core
+    tracktion::tracktion_engine
+    tracktion::tracktion_graph
+    juce::juce_audio_formats)
+
+add_executable(materializer_proof materializer_proof.cpp)
+
+target_compile_definitions(materializer_proof PRIVATE
+    JUCE_USE_CURL=0
+    JUCE_WEB_BROWSER=0
+    JUCE_MODAL_LOOPS_PERMITTED=1)
+
+target_link_libraries(materializer_proof PRIVATE
+    materializer
+    juce::juce_audio_devices
+    juce::juce_audio_utils)
+
+add_library(wire_codec STATIC wire_codec.cpp)
+
+target_compile_features(wire_codec PRIVATE cxx_std_17)
+
+target_link_libraries(wire_codec PRIVATE project_proto)
+
+add_executable(native_runtime native_runtime.cpp)
+
+target_compile_definitions(native_runtime PRIVATE
+    JUCE_USE_CURL=0
+    JUCE_WEB_BROWSER=0
+    JUCE_MODAL_LOOPS_PERMITTED=1)
+
+target_link_libraries(native_runtime PRIVATE
+    materializer
+    wire_codec
+    juce::juce_audio_devices
+    juce::juce_audio_utils
+    juce::juce_events)
+
 enable_testing()
 add_test(NAME toolchain_proof COMMAND toolchain_proof)
 add_test(NAME proof_schema COMMAND proof_schema)
+add_test(NAME project_schema COMMAND project_schema)
+add_test(NAME materializer_proof COMMAND materializer_proof)

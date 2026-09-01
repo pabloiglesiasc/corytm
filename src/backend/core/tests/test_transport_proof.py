@@ -1,15 +1,11 @@
 import asyncio
 import platform
 import secrets
-import struct
 from pathlib import Path
 
 import pytest
 from proof_pb2 import ProofMessage
-
-TRANSPORT_MAGIC = 0x636F7274
-HEADER_FORMAT = "<II"
-HEADER_SIZE = struct.calcsize(HEADER_FORMAT)
+from runtime.transport import read_frame, write_frame
 
 
 def _transport_proof_executable() -> Path:
@@ -19,20 +15,6 @@ def _transport_proof_executable() -> Path:
         return build_dir / "Release" / "transport_proof.exe"
 
     return build_dir / "transport_proof"
-
-
-async def _read_frame(reader: asyncio.StreamReader) -> bytes:
-    header = await reader.readexactly(HEADER_SIZE)
-    magic, length = struct.unpack(HEADER_FORMAT, header)
-
-    if magic != TRANSPORT_MAGIC:
-        raise ValueError(f"unexpected magic number: {magic:#x}")
-
-    return await reader.readexactly(length)
-
-
-def _write_frame(writer: asyncio.StreamWriter, payload: bytes) -> None:
-    writer.write(struct.pack(HEADER_FORMAT, TRANSPORT_MAGIC, len(payload)) + payload)
 
 
 async def _round_trip() -> None:
@@ -59,16 +41,16 @@ async def _round_trip() -> None:
     try:
         reader, writer = await asyncio.wait_for(connection_future, timeout=5)
 
-        received_secret = await asyncio.wait_for(_read_frame(reader), timeout=5)
+        received_secret = await asyncio.wait_for(read_frame(reader), timeout=5)
         assert received_secret.decode("utf-8") == secret
 
         command = ProofMessage(
             schema_version=1, payload="corytm-transport-proof-command"
         )
-        _write_frame(writer, command.SerializeToString())
+        write_frame(writer, command.SerializeToString())
         await writer.drain()
 
-        event_bytes = await asyncio.wait_for(_read_frame(reader), timeout=5)
+        event_bytes = await asyncio.wait_for(read_frame(reader), timeout=5)
         event = ProofMessage()
         event.ParseFromString(event_bytes)
 

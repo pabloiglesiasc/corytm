@@ -15,13 +15,13 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
-pythonpath = ["generated"]
+testpaths = ["tests", "modules"]
+pythonpath = ["generated", "modules"]
 markers = ["transport: cross-language proof requiring the native build to already exist (run via check-transport, not check-python)"]
 
 [tool.pyright]
-include = ["tests"]
-extraPaths = ["generated"]
+include = ["tests", "modules", "main.py"]
+extraPaths = ["generated", "modules"]
 typeCheckingMode = "strict"
 pythonVersion = "3.14"
 

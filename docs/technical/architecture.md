@@ -49,7 +49,7 @@ Corytm Engine is designed to expose semantic editing operations (illustrative on
 
 ## Python↔C++ Boundary
 
-Python and the native runtime are designed to communicate through a narrow, versioned local protocol: commands and events defined as Protobuf messages under `src/schemas/`, carried over a local loopback-socket transport — not exhaustive bindings to Tracktion Engine. The concrete socket/framing implementation is a replaceable detail, independent of the schema and the application boundary. See ADR-007. `src/schemas/proof.proto` now proves the C++ (CMake-vendored) and Python (uv-managed) codegen pipeline end to end with one illustrative message (FT-008/TK-009); the real product command/event message definitions do not exist yet (see Unresolved).
+Python and the native runtime are designed to communicate through a narrow, versioned local protocol: commands and events defined as Protobuf messages under `src/schemas/`, carried over a local loopback-socket transport — not exhaustive bindings to Tracktion Engine. The concrete socket/framing implementation is a replaceable detail, independent of the schema and the application boundary. See ADR-007. `src/schemas/proof.proto` proves the C++ (CMake-vendored) and Python (uv-managed) codegen pipeline end to end with one illustrative message (FT-008/TK-009). `src/schemas/project.proto` (EP-005) carries the first real, if deliberately minimal, product message definitions: `Project`/`AudioTrack`/`AudioClip` (timing only — no MIDI, plugins, or automation yet) and a `MaterializeProjectCommand`/`ProjectRenderedEvent` pair proving one command/event round trip end to end, including real Tracktion Engine materialization and an offline render. This remains a deliberately narrow slice, not the full product schema — most real command/event message definitions (and the concrete Corytm Engine domain model beyond this minimal slice) remain open (see Unresolved).
 
 ## Dependency Direction
 
@@ -61,4 +61,4 @@ The conceptual source layout separates frontend, backend core (with engine/doria
 
 ## Unresolved
 
-The following remain deliberately open, not settled by this document: the persistence implementation; cloud/sync architecture; provider mappings behind Allegro/Virtuoso/Maestro; frontend design-system, component, state-management, and rendering choices; and the concrete protocol/schema messages carried over the transport ADR-007 establishes.
+The following remain deliberately open, not settled by this document: the persistence implementation; cloud/sync architecture; provider mappings behind Allegro/Virtuoso/Maestro; frontend design-system, component, state-management, and rendering choices; and the great majority of the concrete protocol/schema messages a real product needs (EP-005's `project.proto` resolves only a first, minimal one-track/one-clip slice of this, not the general case).

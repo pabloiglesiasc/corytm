@@ -1,0 +1,35 @@
+syntax = "proto3";
+
+package corytm.schemas.project;
+
+message AudioClip {
+  uint32 schema_version = 1;
+  string id = 2;
+  double start_seconds = 3;
+  double duration_seconds = 4;
+}
+
+message AudioTrack {
+  uint32 schema_version = 1;
+  string id = 2;
+  repeated AudioClip clips = 3;
+}
+
+message Project {
+  uint32 schema_version = 1;
+  string id = 2;
+  repeated AudioTrack tracks = 3;
+}
+
+message MaterializeProjectCommand {
+  uint32 schema_version = 1;
+  Project project = 2;
+}
+
+message ProjectRenderedEvent {
+  uint32 schema_version = 1;
+  string project_id = 2;
+  string rendered_file_path = 3;
+  uint64 rendered_sample_count = 4;
+  double peak_amplitude = 5;
+}

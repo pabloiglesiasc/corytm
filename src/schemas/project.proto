@@ -33,3 +33,19 @@ message ProjectRenderedEvent {
   uint64 rendered_sample_count = 4;
   double peak_amplitude = 5;
 }
+
+message MoveClipCommand {
+  uint32 schema_version = 1;
+  string project_id = 2;
+  string track_id = 3;
+  string clip_id = 4;
+  double new_start_seconds = 5;
+}
+
+message ClipMovedEvent {
+  uint32 schema_version = 1;
+  string project_id = 2;
+  string track_id = 3;
+  string clip_id = 4;
+  double start_seconds = 5;
+}

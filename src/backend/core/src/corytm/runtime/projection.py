@@ -7,7 +7,7 @@ Native Audio Runtime consumes, per ADR-007's schema/transport split.
 from corytm.engine.project import Project
 from corytm.generated.project_pb2 import AudioClip as AudioClipMessage
 from corytm.generated.project_pb2 import AudioTrack as AudioTrackMessage
-from corytm.generated.project_pb2 import MaterializeProjectCommand
+from corytm.generated.project_pb2 import MaterializeProjectCommand, MoveClipCommand
 from corytm.generated.project_pb2 import Project as ProjectMessage
 
 SCHEMA_VERSION = 1
@@ -49,4 +49,33 @@ def to_materialize_command(project: Project) -> MaterializeProjectCommand:
                 for track in project.tracks
             ],
         ),
+    )
+
+
+def to_move_clip_command(
+    *, project_id: str, track_id: str, clip_id: str, new_start_seconds: float
+) -> MoveClipCommand:
+    """Project a clip-move edit intention into a `MoveClipCommand`.
+
+    Pure: describes the edit's intention as a wire command, independent
+    of whether the Native Audio Runtime already has this project loaded
+    — it is not a projection of a `Project`'s full state.
+
+    Args:
+        project_id: Id of the project owning the clip.
+        track_id: Id of the track owning the clip, within that
+            project.
+        clip_id: Id of the clip to move, within that track.
+        new_start_seconds: The clip's new start position, in seconds.
+
+    Returns:
+        The equivalent `MoveClipCommand`, ready to send over the
+        ADR-007 transport.
+    """
+    return MoveClipCommand(
+        schema_version=SCHEMA_VERSION,
+        project_id=project_id,
+        track_id=track_id,
+        clip_id=clip_id,
+        new_start_seconds=new_start_seconds,
     )

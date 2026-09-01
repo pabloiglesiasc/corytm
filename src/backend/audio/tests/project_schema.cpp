@@ -4,7 +4,9 @@
 
 using corytm::schemas::project::AudioClip;
 using corytm::schemas::project::AudioTrack;
+using corytm::schemas::project::ClipMovedEvent;
 using corytm::schemas::project::MaterializeProjectCommand;
+using corytm::schemas::project::MoveClipCommand;
 using corytm::schemas::project::ProjectRenderedEvent;
 
 int main()
@@ -56,5 +58,43 @@ int main()
                                   && decodedEvent.rendered_sample_count() == originalEvent.rendered_sample_count()
                                   && decodedEvent.peak_amplitude() == originalEvent.peak_amplitude();
 
-    return commandRoundTripOk && eventRoundTripOk ? 0 : 1;
+    MoveClipCommand originalMoveCommand;
+    originalMoveCommand.set_schema_version (1);
+    originalMoveCommand.set_project_id ("corytm-project-schema-proof");
+    originalMoveCommand.set_track_id ("track-1");
+    originalMoveCommand.set_clip_id ("clip-1");
+    originalMoveCommand.set_new_start_seconds (5.0);
+
+    std::string serializedMoveCommand;
+    const bool moveCommandSerializedOk = originalMoveCommand.SerializeToString (&serializedMoveCommand);
+
+    MoveClipCommand decodedMoveCommand;
+    const bool moveCommandParsedOk = decodedMoveCommand.ParseFromString (serializedMoveCommand);
+
+    const bool moveCommandRoundTripOk = moveCommandSerializedOk && moveCommandParsedOk
+                                        && decodedMoveCommand.project_id() == "corytm-project-schema-proof"
+                                        && decodedMoveCommand.track_id() == "track-1"
+                                        && decodedMoveCommand.clip_id() == "clip-1"
+                                        && decodedMoveCommand.new_start_seconds() == 5.0;
+
+    ClipMovedEvent originalMovedEvent;
+    originalMovedEvent.set_schema_version (1);
+    originalMovedEvent.set_project_id ("corytm-project-schema-proof");
+    originalMovedEvent.set_track_id ("track-1");
+    originalMovedEvent.set_clip_id ("clip-1");
+    originalMovedEvent.set_start_seconds (5.0);
+
+    std::string serializedMovedEvent;
+    const bool movedEventSerializedOk = originalMovedEvent.SerializeToString (&serializedMovedEvent);
+
+    ClipMovedEvent decodedMovedEvent;
+    const bool movedEventParsedOk = decodedMovedEvent.ParseFromString (serializedMovedEvent);
+
+    const bool movedEventRoundTripOk = movedEventSerializedOk && movedEventParsedOk
+                                       && decodedMovedEvent.project_id() == originalMovedEvent.project_id()
+                                       && decodedMovedEvent.track_id() == originalMovedEvent.track_id()
+                                       && decodedMovedEvent.clip_id() == originalMovedEvent.clip_id()
+                                       && decodedMovedEvent.start_seconds() == originalMovedEvent.start_seconds();
+
+    return commandRoundTripOk && eventRoundTripOk && moveCommandRoundTripOk && movedEventRoundTripOk ? 0 : 1;
 }

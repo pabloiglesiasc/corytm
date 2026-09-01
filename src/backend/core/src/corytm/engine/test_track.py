@@ -29,3 +29,29 @@ def test_rejects_a_nested_clip_with_an_invalid_duration() -> None:
                 ],
             }
         )
+
+
+def test_with_clip_moved_returns_a_new_track_with_updated_start() -> None:
+    clip = AudioClip(id="clip-1", start_seconds=0.0, duration_seconds=2.0)
+    track = AudioTrack(id="track-1", clips=(clip,))
+
+    moved = track.with_clip_moved(clip_id="clip-1", new_start_seconds=5.0)
+
+    assert moved is not track
+    assert moved.clips[0].start_seconds == 5.0
+    assert track.clips[0].start_seconds == 0.0
+
+
+def test_with_clip_moved_rejects_an_unknown_clip() -> None:
+    track = AudioTrack(id="track-1")
+
+    with pytest.raises(ValueError, match="clip"):
+        track.with_clip_moved(clip_id="missing", new_start_seconds=1.0)
+
+
+def test_with_clip_moved_rejects_a_negative_start() -> None:
+    clip = AudioClip(id="clip-1", start_seconds=0.0, duration_seconds=2.0)
+    track = AudioTrack(id="track-1", clips=(clip,))
+
+    with pytest.raises(ValidationError):
+        track.with_clip_moved(clip_id="clip-1", new_start_seconds=-1.0)

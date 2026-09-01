@@ -2,7 +2,7 @@ from corytm.engine.clip import AudioClip
 from corytm.engine.project import Project
 from corytm.engine.track import AudioTrack
 
-from .projection import SCHEMA_VERSION, to_materialize_command
+from .projection import SCHEMA_VERSION, to_materialize_command, to_move_clip_command
 
 
 def test_projects_an_empty_project() -> None:
@@ -40,3 +40,18 @@ def test_projects_tracks_and_clips_in_order() -> None:
     assert second_clip_message.id == "clip-b"
     assert second_clip_message.start_seconds == 1.5
     assert second_clip_message.duration_seconds == 2.0
+
+
+def test_projects_a_move_clip_command() -> None:
+    command = to_move_clip_command(
+        project_id="project-1",
+        track_id="track-1",
+        clip_id="clip-1",
+        new_start_seconds=5.0,
+    )
+
+    assert command.schema_version == SCHEMA_VERSION
+    assert command.project_id == "project-1"
+    assert command.track_id == "track-1"
+    assert command.clip_id == "clip-1"
+    assert command.new_start_seconds == 5.0

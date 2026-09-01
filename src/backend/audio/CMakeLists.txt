@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.22)
+cmake_minimum_required(VERSION 3.28)
 
 project(audio LANGUAGES C CXX)
 
@@ -19,13 +19,41 @@ FetchContent_Declare(
 FetchContent_Declare(
     protobuf
     GIT_REPOSITORY https://github.com/protocolbuffers/protobuf.git
-    GIT_TAG v36.1)
+    GIT_TAG v36.1
+    GIT_SHALLOW TRUE
+    EXCLUDE_FROM_ALL)
 
 set(protobuf_INSTALL OFF CACHE BOOL "" FORCE)
+set(protobuf_MSVC_STATIC_RUNTIME OFF CACHE BOOL "" FORCE)
+set(protobuf_BUILD_PROTOC_BINARIES OFF CACHE BOOL "" FORCE)
+set(protobuf_BUILD_LIBPROTOC OFF CACHE BOOL "" FORCE)
+set(protobuf_BUILD_LIBUPB OFF CACHE BOOL "" FORCE)
+
+if (APPLE)
+    set(proof_schema_protoc_url https://github.com/protocolbuffers/protobuf/releases/download/v36.1/protoc-36.1-osx-aarch_64.zip)
+    set(proof_schema_protoc_hash SHA256=de56d57afe30c5d191b11d24ff93dd4025728d7fb43b773886b2d3613e0bdbb2)
+elseif (WIN32)
+    set(proof_schema_protoc_url https://github.com/protocolbuffers/protobuf/releases/download/v36.1/protoc-36.1-win64.zip)
+    set(proof_schema_protoc_hash SHA256=390e515cb456e6a978553bdb57baf087b054885077fd6da7f7ff0160279c07d6)
+else ()
+    message(FATAL_ERROR "No prebuilt protoc binary declared for this platform in src/backend/audio/CMakeLists.txt")
+endif ()
+
+FetchContent_Declare(
+    protoc_binary
+    URL ${proof_schema_protoc_url}
+    URL_HASH ${proof_schema_protoc_hash})
 
 FetchContent_MakeAvailable(juce)
 FetchContent_MakeAvailable(tracktion_engine)
 FetchContent_MakeAvailable(protobuf)
+FetchContent_MakeAvailable(protoc_binary)
+
+if (WIN32)
+    set(proof_schema_protoc_exe ${protoc_binary_SOURCE_DIR}/bin/protoc.exe)
+else ()
+    set(proof_schema_protoc_exe ${protoc_binary_SOURCE_DIR}/bin/protoc)
+endif ()
 
 set(proof_schema_dir ${CMAKE_CURRENT_SOURCE_DIR}/../../schemas)
 set(proof_schema_generated_dir ${CMAKE_CURRENT_BINARY_DIR}/generated)
@@ -33,9 +61,9 @@ file(MAKE_DIRECTORY ${proof_schema_generated_dir})
 
 add_custom_command(
     OUTPUT ${proof_schema_generated_dir}/proof.pb.cc ${proof_schema_generated_dir}/proof.pb.h
-    COMMAND protobuf::protoc
+    COMMAND ${proof_schema_protoc_exe}
     ARGS --cpp_out=${proof_schema_generated_dir} -I ${proof_schema_dir} ${proof_schema_dir}/proof.proto
-    DEPENDS protobuf::protoc ${proof_schema_dir}/proof.proto)
+    DEPENDS ${proof_schema_protoc_exe} ${proof_schema_dir}/proof.proto)
 
 add_executable(proof_schema proof_schema.cpp ${proof_schema_generated_dir}/proof.pb.cc)
 

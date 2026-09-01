@@ -97,7 +97,7 @@ Directories provide context — names should not repeat it (`services/project.py
 
 Strong typing from the start of real implementation: Pyright strict (or near-strict) for Python, `strict: true` for TypeScript, strong warnings-as-errors where reasonable for Corytm-owned C++. Pyright strict and TypeScript strict mode are configured and passing; C++ warnings-as-errors is not yet established. Suppression is never a normal way to satisfy a type or lint rule.
 
-Unit tests live with the component that owns the tested behavior; cross-component tests get a dedicated future home. Dependencies are minimal and justified against purpose, alternatives, maintenance, license, security, and runtime/build impact; a foundational structural dependency may need a decision record. Serialized process boundaries use neutral schemas — a Python model, its schema, and a C++ model are three distinct things. Generated artifacts are never the source of truth and are never hand-edited.
+Unit tests live with the component that owns the tested behavior; cross-component tests live in a dedicated home (`src/backend/core/tests/` for the Python core). Dependencies are minimal and justified against purpose, alternatives, maintenance, license, security, and runtime/build impact; a foundational structural dependency may need a decision record. Serialized process boundaries use neutral schemas — a Python model, its schema, and a C++ model are three distinct things. Generated artifacts are never the source of truth and are never hand-edited.
 
 Warnings are failures to understand, not noise to suppress — fix the cause. A test is only changed when it demonstrably contradicts current expected behavior or the Task intentionally changes that behavior.
 

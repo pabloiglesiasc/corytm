@@ -72,7 +72,7 @@ target_compile_features(proof_proto PUBLIC cxx_std_17)
 
 target_link_libraries(proof_proto PUBLIC protobuf::libprotobuf)
 
-add_executable(proof_schema proof_schema.cpp)
+add_executable(proof_schema tests/proof_schema.cpp)
 
 target_link_libraries(proof_schema PRIVATE proof_proto)
 
@@ -90,15 +90,15 @@ target_compile_features(project_proto PUBLIC cxx_std_17)
 
 target_link_libraries(project_proto PUBLIC protobuf::libprotobuf)
 
-add_executable(project_schema project_schema.cpp)
+add_executable(project_schema tests/project_schema.cpp)
 
 target_link_libraries(project_schema PRIVATE project_proto)
 
-add_executable(transport_proof transport_proof.cpp)
+add_executable(transport_proof tests/transport_proof.cpp)
 
 target_link_libraries(transport_proof PRIVATE proof_proto juce::juce_events)
 
-add_executable(toolchain_proof toolchain_proof.cpp)
+add_executable(toolchain_proof tests/toolchain_proof.cpp)
 
 target_compile_features(toolchain_proof PRIVATE cxx_std_20)
 
@@ -116,6 +116,8 @@ target_link_libraries(toolchain_proof PRIVATE
 
 add_library(materializer STATIC materializer.cpp)
 
+target_include_directories(materializer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+
 target_compile_features(materializer PUBLIC cxx_std_20)
 
 target_compile_definitions(materializer PRIVATE
@@ -129,7 +131,7 @@ target_link_libraries(materializer PUBLIC
     tracktion::tracktion_graph
     juce::juce_audio_formats)
 
-add_executable(materializer_proof materializer_proof.cpp)
+add_executable(materializer_proof tests/materializer_proof.cpp)
 
 target_compile_definitions(materializer_proof PRIVATE
     JUCE_USE_CURL=0

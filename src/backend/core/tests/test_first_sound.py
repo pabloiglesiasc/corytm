@@ -3,10 +3,11 @@ import tempfile
 from pathlib import Path
 
 import pytest
-from engine.clip import AudioClip
-from engine.project import Project
-from engine.track import AudioTrack
-from runtime.session import materialize_project
+
+from corytm.engine.clip import AudioClip
+from corytm.engine.project import Project
+from corytm.engine.track import AudioTrack
+from corytm.runtime.session import materialize_project
 
 
 @pytest.mark.transport

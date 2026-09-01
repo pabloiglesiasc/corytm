@@ -115,6 +115,8 @@ Whenever uncommitted changes exist at a human Git boundary — Task Close or any
 
 Within that block, the staged-set verification command must never be chained into the commit or push commands with `&&`, `;`, or any other automatic continuation; an explicit interactive pause (for example, a `read` prompt) must separate them instead, so that running the whole block still halts for genuine human review of the staged set before any mutating command executes.
 
+Commit messages Claude proposes contain only repository-approved human-authored subject/body content. Claude must never add `Co-Authored-By`, `Signed-off-by`, or any other author/agent attribution trailer to a proposed commit message or Git handoff, regardless of tool, model, or prior-convention defaults, unless the user explicitly requests attribution for that specific commit.
+
 ## 11. Knowledge & Harness Governance
 
 Memory is disposable and never authoritative: an observation becomes a memory entry; if it's repeated or validated it gets promoted into a doc, skill, decision, or spec and the memory entry is then removed; otherwise it expires.

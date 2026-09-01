@@ -1,4 +1,4 @@
-from proof_pb2 import ProofMessage
+from corytm.generated.proof_pb2 import ProofMessage
 
 
 def test_proof_message_round_trips() -> None:

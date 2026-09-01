@@ -1,8 +1,8 @@
-from engine.clip import AudioClip
-from engine.project import Project
-from engine.track import AudioTrack
+from corytm.engine.clip import AudioClip
+from corytm.engine.project import Project
+from corytm.engine.track import AudioTrack
 
-from runtime.projection import SCHEMA_VERSION, to_materialize_command
+from .projection import SCHEMA_VERSION, to_materialize_command
 
 
 def test_projects_an_empty_project() -> None:

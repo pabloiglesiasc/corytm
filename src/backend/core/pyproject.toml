@@ -1,10 +1,18 @@
 [project]
-name = "core"
+name = "corytm"
 version = "0.1.0"
 requires-python = ">=3.14.2"
 dependencies = [
     "protobuf>=7.36.1",
+    "pydantic>=2.13.5",
 ]
+
+[project.scripts]
+corytm = "corytm.main:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
 [dependency-groups]
 dev = [
@@ -15,16 +23,15 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["tests", "modules"]
-pythonpath = ["generated", "modules"]
+testpaths = ["tests", "src/corytm"]
 markers = ["transport: cross-language proof requiring the native build to already exist (run via check-transport, not check-python)"]
 
 [tool.pyright]
-include = ["tests", "modules", "main.py"]
-extraPaths = ["generated", "modules"]
+include = ["tests", "src"]
+exclude = ["src/corytm/generated"]
 typeCheckingMode = "strict"
 pythonVersion = "3.14"
 
 [tool.ruff]
 target-version = "py314"
-extend-exclude = ["generated"]
+extend-exclude = ["src/corytm/generated"]

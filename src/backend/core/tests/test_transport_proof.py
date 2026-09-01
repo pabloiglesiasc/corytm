@@ -4,8 +4,9 @@ import secrets
 from pathlib import Path
 
 import pytest
-from proof_pb2 import ProofMessage
-from runtime.transport import read_frame, write_frame
+
+from corytm.generated.proof_pb2 import ProofMessage
+from corytm.runtime.transport import read_frame, write_frame
 
 
 def _transport_proof_executable() -> Path:

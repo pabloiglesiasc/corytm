@@ -1,8 +1,8 @@
-from engine.project import Project
-from project_pb2 import AudioClip as AudioClipMessage
-from project_pb2 import AudioTrack as AudioTrackMessage
-from project_pb2 import MaterializeProjectCommand
-from project_pb2 import Project as ProjectMessage
+from corytm.engine.project import Project
+from corytm.generated.project_pb2 import AudioClip as AudioClipMessage
+from corytm.generated.project_pb2 import AudioTrack as AudioTrackMessage
+from corytm.generated.project_pb2 import MaterializeProjectCommand
+from corytm.generated.project_pb2 import Project as ProjectMessage
 
 SCHEMA_VERSION = 1
 

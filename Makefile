@@ -5,8 +5,8 @@ check: check-python check-frontend check-desktop check-native check-transport
 check-all: clean check
 
 check-python:
-	mkdir -p src/backend/core/generated
-	cd src/backend/core && uv run python -m grpc_tools.protoc -I ../../schemas --python_out=generated --pyi_out=generated ../../schemas/proof.proto ../../schemas/project.proto
+	mkdir -p src/backend/core/src/corytm/generated
+	cd src/backend/core && uv run python -m grpc_tools.protoc -I ../../schemas --python_out=src/corytm/generated --pyi_out=src/corytm/generated ../../schemas/proof.proto ../../schemas/project.proto
 	cd src/backend/core && uv run pytest -m "not transport"
 	cd src/backend/core && uv run pyright
 	cd src/backend/core && uv run ruff check .
@@ -32,7 +32,7 @@ check-transport:
 
 clean:
 	rm -rf src/backend/core/.venv
-	rm -rf src/backend/core/generated
+	rm -rf src/backend/core/src/corytm/generated
 	rm -rf src/frontend/desktop/node_modules
 	rm -rf src/frontend/desktop/src-tauri/target
 	rm -rf src/backend/audio/build

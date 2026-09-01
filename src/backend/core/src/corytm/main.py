@@ -1,10 +1,10 @@
 import asyncio
 from pathlib import Path
 
-from engine.clip import AudioClip
-from engine.project import Project
-from engine.track import AudioTrack
-from runtime.session import materialize_project
+from corytm.engine.clip import AudioClip
+from corytm.engine.project import Project
+from corytm.engine.track import AudioTrack
+from corytm.runtime.session import materialize_project
 
 
 def _build_first_sound_project() -> Project:

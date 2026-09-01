@@ -12,8 +12,8 @@ Python knows what the project means musically. C++ knows how to make it sound. S
 
 ## Naming
 
-- **Corytm Engine** (`src/backend/core/modules/engine`) — Corytm's canonical musical/project domain.
-- **Runtime** (`src/backend/core/modules/runtime`) — the Python-side synchronization/projection concern between Corytm Engine and the Native Audio Runtime.
+- **Corytm Engine** (`src/backend/core/src/corytm/engine`) — Corytm's canonical musical/project domain.
+- **Runtime** (`src/backend/core/src/corytm/runtime`) — the Python-side synchronization/projection concern between Corytm Engine and the Native Audio Runtime.
 - **Native Audio Runtime** (`src/backend/audio`) — the C++ runtime. Avoid calling it "the audio engine" because that would be ambiguous with Corytm Engine and Tracktion Engine; use "Native Audio Runtime" instead.
 - **Tracktion Engine** — the third-party technology inside the Native Audio Runtime.
 
@@ -21,7 +21,7 @@ Conceptually: Dorian → Corytm Engine → Runtime → Native Audio Runtime → 
 
 ## Canonical State and Projection
 
-Corytm Engine is designed to own canonical musical/project state — concepts such as Project, Track, Clip, Note, Plugin, and Automation, named here illustratively and not frozen as a schema. Tracktion Engine's Edit is a runtime projection of that canonical state, not a second source of truth. See ADR-001.
+Corytm Engine is designed to own canonical musical/project state — concepts such as Project, Track, Clip, Note, Plugin, and Automation, named here illustratively and not frozen as a schema. Tracktion Engine's Edit is a runtime projection of that canonical state, not a second source of truth. See ADR-001. Canonical Corytm Engine (and, as they are introduced, Runtime and Dorian application-facing) models are Pydantic models, not dataclasses or other plain structures — invariants are enforced explicitly at construction/validation, including transitively through nested models. See ADR-008.
 
 ## Process Topology
 
@@ -50,6 +50,10 @@ Corytm Engine is designed to expose semantic editing operations (illustrative on
 ## Python↔C++ Boundary
 
 Python and the native runtime are designed to communicate through a narrow, versioned local protocol: commands and events defined as Protobuf messages under `src/schemas/`, carried over a local loopback-socket transport — not exhaustive bindings to Tracktion Engine. The concrete socket/framing implementation is a replaceable detail, independent of the schema and the application boundary. See ADR-007. `src/schemas/proof.proto` proves the C++ (CMake-vendored) and Python (uv-managed) codegen pipeline end to end with one illustrative message (FT-008/TK-009). `src/schemas/project.proto` (EP-005) carries the first real, if deliberately minimal, product message definitions: `Project`/`AudioTrack`/`AudioClip` (timing only — no MIDI, plugins, or automation yet) and a `MaterializeProjectCommand`/`ProjectRenderedEvent` pair proving one command/event round trip end to end, including real Tracktion Engine materialization and an offline render. This remains a deliberately narrow slice, not the full product schema — most real command/event message definitions (and the concrete Corytm Engine domain model beyond this minimal slice) remain open (see Unresolved).
+
+## Python Backend Package Layout
+
+`src/backend/core` is a real, installable Python package rooted at `corytm` (`src/backend/core/src/corytm/`, built by `hatchling`), not a bare script directory. `uv run`/`uv sync` build and install it in editable mode automatically, so `corytm`'s subpackages resolve the same way regardless of the caller's current working directory and without manually setting `PYTHONPATH`. The application entry point is the `corytm` console script (`[project.scripts]`), invocable as `uv run --project src/backend/core corytm` from anywhere, or plain `uv run corytm` from inside `src/backend/core`. An import crossing one of this document's named ownership boundaries (Corytm Engine, Runtime, Native Audio Runtime, and, once introduced, Dorian) is an absolute, package-qualified import (`corytm.engine.*`, `corytm.runtime.*`); an import between tightly-coupled sibling modules inside the same subpackage may be relative. See ADR-009.
 
 ## Native Audio Runtime Source Layout
 

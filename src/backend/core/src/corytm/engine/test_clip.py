@@ -1,6 +1,7 @@
 import pytest
+from pydantic import ValidationError
 
-from engine.clip import AudioClip
+from .clip import AudioClip
 
 
 def test_constructs_with_valid_fields() -> None:
@@ -12,10 +13,10 @@ def test_constructs_with_valid_fields() -> None:
 
 
 def test_rejects_negative_start() -> None:
-    with pytest.raises(ValueError):
+    with pytest.raises(ValidationError):
         AudioClip(id="clip-1", start_seconds=-1.0, duration_seconds=1.0)
 
 
 def test_rejects_non_positive_duration() -> None:
-    with pytest.raises(ValueError):
+    with pytest.raises(ValidationError):
         AudioClip(id="clip-1", start_seconds=0.0, duration_seconds=0.0)

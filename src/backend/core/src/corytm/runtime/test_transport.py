@@ -2,7 +2,7 @@ import asyncio
 
 import pytest
 
-from runtime.transport import TRANSPORT_MAGIC, read_frame, write_frame
+from .transport import TRANSPORT_MAGIC, read_frame, write_frame
 
 
 class _RecordingWriter:

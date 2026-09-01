@@ -18,9 +18,8 @@ FetchContent_Declare(
 
 FetchContent_Declare(
     protobuf
-    GIT_REPOSITORY https://github.com/protocolbuffers/protobuf.git
-    GIT_TAG v36.1
-    GIT_SHALLOW TRUE
+    URL https://github.com/protocolbuffers/protobuf/releases/download/v36.1/protobuf-36.1.tar.gz
+    URL_HASH SHA256=dc74fa582f559cbd31614ddfefb4868f43c919d7184bde514bb47f90c6025eb8
     EXCLUDE_FROM_ALL)
 
 set(protobuf_INSTALL OFF CACHE BOOL "" FORCE)
@@ -69,7 +68,7 @@ add_executable(proof_schema proof_schema.cpp ${proof_schema_generated_dir}/proof
 
 target_include_directories(proof_schema PRIVATE ${proof_schema_generated_dir})
 
-target_compile_features(proof_schema PRIVATE cxx_std_20)
+target_compile_features(proof_schema PRIVATE cxx_std_17)
 
 target_link_libraries(proof_schema PRIVATE protobuf::libprotobuf)
 

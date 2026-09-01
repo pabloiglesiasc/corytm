@@ -1,5 +1,7 @@
 .PHONY: check check-all check-python check-frontend check-desktop check-native check-transport clean
 
+CMAKE_CONFIGURE_FLAGS ?=
+
 check: check-python check-frontend check-desktop check-native check-transport
 
 check-all: clean check
@@ -23,7 +25,7 @@ check-desktop:
 	cd src/frontend/desktop/src-tauri && cargo test
 
 check-native:
-	cmake -S src/backend/audio -B src/backend/audio/build
+	cmake -S src/backend/audio -B src/backend/audio/build $(CMAKE_CONFIGURE_FLAGS)
 	cmake --build src/backend/audio/build --config Release
 	ctest --test-dir src/backend/audio/build --output-on-failure -C Release
 

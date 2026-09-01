@@ -14,6 +14,7 @@ FetchContent_Declare(
     GIT_REPOSITORY https://github.com/Tracktion/tracktion_engine.git
     GIT_TAG v3.2.0
     GIT_SUBMODULES ""
+    GIT_SHALLOW ON
     SOURCE_SUBDIR modules)
 
 FetchContent_Declare(

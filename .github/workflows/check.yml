@@ -2,7 +2,25 @@ name: check
 
 on:
   push:
+    paths-ignore:
+      - 'docs/**'
+      - 'decisions/**'
+      - 'specs/**'
+      - '.claude/**'
+      - 'README.md'
+      - 'CLAUDE.md'
   pull_request:
+    paths-ignore:
+      - 'docs/**'
+      - 'decisions/**'
+      - 'specs/**'
+      - '.claude/**'
+      - 'README.md'
+      - 'CLAUDE.md'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   check:
@@ -11,18 +29,46 @@ jobs:
       matrix:
         os: [macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    env:
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: sccache
+      CMAKE_BUILD_PARALLEL_LEVEL: ${{ matrix.os == 'macos-latest' && '3' || '4' }}
     steps:
       - uses: actions/checkout@v7.0.1
+
+      - name: Capture runner image identity
+        shell: bash
+        run: |
+          echo "IMAGE_OS=$ImageOS" >> "$GITHUB_ENV"
+          echo "IMAGE_VERSION=$ImageVersion" >> "$GITHUB_ENV"
 
       - uses: astral-sh/setup-uv@v10.0.1
 
       - uses: actions/setup-node@v7.0.0
         with:
           node-version: 24
+          cache: npm
+          cache-dependency-path: src/frontend/desktop/package-lock.json
 
       - uses: lukka/get-cmake@v4.4.2
 
       - uses: dtolnay/rust-toolchain@stable
+
+      - uses: mozilla-actions/sccache-action@v0.0.11
+
+      - uses: actions/cache@v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: cargo-${{ runner.os }}-${{ hashFiles('src/frontend/desktop/src-tauri/Cargo.lock') }}
+          restore-keys: |
+            cargo-${{ runner.os }}-
+
+      - uses: actions/cache@v6.1.0
+        with:
+          path: src/backend/audio/build/_deps
+          key: native-deps-${{ runner.os }}-${{ runner.arch }}-${{ env.IMAGE_OS }}-${{ env.IMAGE_VERSION }}-${{ runner.os == 'Windows' && 'vs' || 'make' }}-release-${{ hashFiles('src/backend/audio/CMakeLists.txt') }}
 
       - if: runner.os == 'Windows'
         run: choco install make --no-progress
@@ -30,3 +76,5 @@ jobs:
 
       - run: make check
         shell: bash
+        env:
+          CMAKE_CONFIGURE_FLAGS: ${{ runner.os == 'Windows' && '-DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache -DCMAKE_MSVC_DEBUG_INFORMATION_FORMAT=Embedded -DCMAKE_POLICY_CMP0141=NEW' || '-DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache' }}

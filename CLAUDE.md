@@ -113,6 +113,8 @@ Git is stricter still. Claude may inspect git state (`status`, `diff`, `log`, cu
 
 Whenever uncommitted changes exist at a human Git boundary — Task Close or any other point a session stops or hands off — a statement that they are merely "uncommitted" or "await human Git action" is incomplete on its own. The same response must also give the exact handoff derived from the actual current `git status`, presented as one single code block in execution order — never split across multiple code blocks or prose sections — containing, as one contiguous sequence: the precise `git add` paths (never `-A` or `.`), the staged-set verification command, the exact commit command, and the exact push command. This is a response-content requirement, not a permissions change — Claude still never executes any of these commands itself.
 
+Within that block, the staged-set verification command must never be chained into the commit or push commands with `&&`, `;`, or any other automatic continuation; an explicit interactive pause (for example, a `read` prompt) must separate them instead, so that running the whole block still halts for genuine human review of the staged set before any mutating command executes.
+
 ## 11. Knowledge & Harness Governance
 
 Memory is disposable and never authoritative: an observation becomes a memory entry; if it's repeated or validated it gets promoted into a doc, skill, decision, or spec and the memory entry is then removed; otherwise it expires.

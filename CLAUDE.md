@@ -14,7 +14,7 @@ Current lifecycle phase: **Alpha** (approved 2026-08-31, transitioning from Pre-
 
 Python knows what the project means musically. C++ knows how to make it sound.
 
-- **Corytm Engine** (`src/backend/core/modules/engine`) owns Corytm's canonical musical/project state.
+- **Corytm Engine** (`src/backend/core/src/corytm/engine`) owns Corytm's canonical musical/project state.
 - **Native Audio Runtime** (`src/backend/audio`) owns low-level audio execution, built on Tracktion Engine + JUCE. Never call it "the audio engine" — that name is reserved for Corytm Engine and creates ambiguity with Tracktion Engine.
 - **Tracktion Engine** is the third-party technology inside the Native Audio Runtime — a runtime projection of canonical Python state, never the source of truth. Runtime state must eventually be rebuildable from canonical Python state on restart.
 
@@ -30,8 +30,8 @@ Dorian operates only through semantic application tools and services. It must ne
 | CPO | `specs/**`, `decisions/**` | What Corytm should do and why; product coherence |
 | CTO/Architecture | `docs/technical/**` | System architecture, cross-cutting boundaries |
 | CTO/Platform | `src/backend/core/deploys/**`, `.github/**` | Build, release, security, CI infrastructure |
-| CTO/Backend | `src/backend/core/api/**`, `src/backend/core/modules/engine/**` | Corytm Engine, API |
-| CTO/AI & Sound | `src/backend/core/modules/dorian/**`, `src/backend/core/modules/runtime/**` | Dorian, Runtime |
+| CTO/Backend | `src/backend/core/src/corytm/api/**`, `src/backend/core/src/corytm/engine/**` | Corytm Engine, API |
+| CTO/AI & Sound | `src/backend/core/src/corytm/dorian/**`, `src/backend/core/src/corytm/runtime/**` | Dorian, Runtime |
 | CTO/Frontend | `src/frontend/**` | Frontend |
 | CTO/Sound Backend | `src/backend/audio/**` | Native Audio Runtime |
 | CoS | none (consultative) | Strategy, finance, legal, licensing, pricing, fundraising |
@@ -94,6 +94,8 @@ No abstraction before demonstrated ownership and reuse; prefer temporary local d
 Directories provide context — names should not repeat it (`services/project.py`, not `services/project_service.py`). Prefer concise one-word filenames; don't sacrifice clarity to avoid an underscore.
 
 > Never leave comments in the repo. The standard is zero comments: no explanatory comments or docblocks, TODO/FIXME notes, lint/type suppression directives, or commented-out code. Express intent through names, structure, and tests; put rationale in commit messages or PR descriptions. Interpreter shebangs are executable directives, not comments.
+
+Python docstrings are a scoped exception to the paragraph above, not a reopening of it: production Python modules carry an accurate, English module-level docstring; every production Python class carries an accurate Google-style docstring, public or private alike; non-trivial public functions and methods carry the same — each covering semantics, ownership, invariants, side effects, architectural role, and meaningful arguments/returns/raises, never a restatement of the name or signature. Trivial private functions and methods don't need one merely for coverage. A docstring is code: it stays synchronized with behavior on every change, and a stale or misleading docstring is a defect, not a style nit. Every other language, and ordinary explanatory comments in Python itself, remain governed by the zero-comments rule above unchanged.
 
 Strong typing from the start of real implementation: Pyright strict (or near-strict) for Python, `strict: true` for TypeScript, strong warnings-as-errors where reasonable for Corytm-owned C++. Pyright strict and TypeScript strict mode are configured and passing; C++ warnings-as-errors is not yet established. Suppression is never a normal way to satisfy a type or lint rule.
 

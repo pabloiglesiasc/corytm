@@ -67,6 +67,19 @@ Dorian is intended to depend on Engine and Runtime capabilities. There are no de
 
 The conceptual source layout separates frontend, backend core (with engine/dorian/runtime modules), and native audio under `src/`. This is direction only — no source directory is materialized by this step.
 
+## Structural Evolution
+
+Corytm remains domain-oriented. A module stays flat while its responsibilities are genuinely homogeneous; today's flatness in Engine and Runtime is a consequence of small scope, not a permanent architectural target. As demonstrated, distinct responsibilities emerge within a module, it evolves toward explicit internal ownership boundaries — illustratively, models, services, repositories, adapters/clients, tools, providers, and module-owned tests, drawn from only where those concepts genuinely apply. Restructuring happens when a directory accumulates real heterogeneity, before it grows into a large undifferentiated folder — never merely to resemble this target vocabulary in advance, and never by scaffolding empty or ceremonial directories ahead of the responsibilities that would justify them. This section states direction, not a mandate: `CLAUDE.md` §8's anti-premature-abstraction rule and this document's own authority ordering still govern the actual timing of any restructuring.
+
+Per-area growth direction:
+
+- **Engine** — today's compact canonical models (`Project`/`AudioTrack`/`AudioClip`) may remain as-is. Editing/command behavior, undo/history, persistence boundaries, repositories, or orchestration emerging as real, distinct responsibilities is the trigger to split into explicit models/services/repositories/adapters.
+- **Runtime** — keep projection, session, and transport responsibilities clear, as already named in this document's Naming section. Separate models, services, clients/adapters, or lifecycle/orchestration concerns once they become materially distinct from each other, not merely once the vocabulary is available.
+- **Dorian** — not yet started. When Dorian product work begins, its module should be able to grow toward explicit separation of models, services/orchestration, semantic tools/capabilities, providers/model routing, repositories/state, and adapters where justified. None of this is scaffolded in advance of that work.
+- **Native Audio Runtime** — preserve the production-root/`tests/` separation established in "Native Audio Runtime Source Layout" above. Evolve further toward clearer public-header/source/internal boundaries only when API ownership or implementation scale makes that useful; no ceremonial `include`/`src` split before then.
+- **Schemas** (`src/schemas/`) — stay flat while few contracts exist. Introduce domain/version grouping only when multiple event/runtime/API schema families make flat organization materially unclear.
+- **Tests** — preserve colocated unit tests for module ownership. Cross-component, integration, and end-to-end tests stay in the dedicated cross-component home (`src/backend/core/tests/` for the Python core) only when they genuinely cross module boundaries.
+
 ## Unresolved
 
 The following remain deliberately open, not settled by this document: the persistence implementation; cloud/sync architecture; provider mappings behind Allegro/Virtuoso/Maestro; frontend design-system, component, state-management, and rendering choices; and the great majority of the concrete protocol/schema messages a real product needs (EP-005's `project.proto` resolves only a first, minimal one-track/one-clip slice of this, not the general case).

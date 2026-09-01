@@ -1,3 +1,11 @@
+"""Spawns and drives the Native Audio Runtime for one materialization.
+
+Owns the process lifecycle and handshake for a single request/response
+round trip: spawn `native_runtime`, exchange a per-launch secret over a
+loopback socket, send a `MaterializeProjectCommand`, and return the
+`ProjectRenderedEvent` it responds with.
+"""
+
 import asyncio
 import platform
 import secrets
@@ -14,6 +22,12 @@ _EVENT_TIMEOUT_SECONDS = 30
 
 
 def native_runtime_executable() -> Path:
+    """Return the expected path to the built `native_runtime` binary.
+
+    Returns:
+        The platform-appropriate path under `src/backend/audio/build`;
+        existence is not checked here.
+    """
     build_dir = Path(__file__).resolve().parents[5] / "backend" / "audio" / "build"
 
     if platform.system() == "Windows":
@@ -25,6 +39,31 @@ def native_runtime_executable() -> Path:
 async def materialize_project(
     project: Project, output_directory: Path
 ) -> ProjectRenderedEvent:
+    """Render `project` by spawning and driving the Native Audio Runtime.
+
+    Spawns `native_runtime` as a child process, listens on an ephemeral
+    loopback port, authenticates it with a per-call secret, sends
+    `project` as a `MaterializeProjectCommand`, and waits for the
+    `ProjectRenderedEvent` it renders and sends back. The child process
+    and its listening socket are always torn down before returning,
+    including on error.
+
+    Args:
+        project: The canonical project to materialize.
+        output_directory: Directory the native process should write its
+            rendered output into.
+
+    Returns:
+        The `ProjectRenderedEvent` describing the render outcome.
+
+    Raises:
+        FileNotFoundError: `native_runtime_executable()` doesn't exist —
+            the native build hasn't been run.
+        RuntimeError: The spawned process failed to authenticate, or
+            exited with a non-zero return code.
+        TimeoutError: The connection, handshake, or event wasn't
+            received within the configured timeout.
+    """
     executable = native_runtime_executable()
 
     if not executable.exists():

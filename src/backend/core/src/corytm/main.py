@@ -1,3 +1,11 @@
+"""Application entry point: the `corytm` console script.
+
+Builds a minimal one-track/one-clip project, renders it through the
+Native Audio Runtime via `corytm.runtime.session`, and reports the
+result. `[project.scripts]` wires this module's `main` as the
+installed `corytm` command.
+"""
+
 import asyncio
 from pathlib import Path
 
@@ -14,6 +22,10 @@ def _build_first_sound_project() -> Project:
 
 
 def main() -> None:
+    """Render the fixture project and print the rendered outcome.
+
+    Writes the rendered WAV file into the current working directory.
+    """
     project = _build_first_sound_project()
     output_directory = Path.cwd()
 

@@ -144,6 +144,18 @@ target_link_libraries(materializer_proof PRIVATE
     juce::juce_audio_devices
     juce::juce_audio_utils)
 
+add_executable(live_session_proof tests/live_session_proof.cpp)
+
+target_compile_definitions(live_session_proof PRIVATE
+    JUCE_USE_CURL=0
+    JUCE_WEB_BROWSER=0
+    JUCE_MODAL_LOOPS_PERMITTED=1)
+
+target_link_libraries(live_session_proof PRIVATE
+    materializer
+    juce::juce_audio_devices
+    juce::juce_audio_utils)
+
 add_library(wire_codec STATIC wire_codec.cpp)
 
 target_compile_features(wire_codec PRIVATE cxx_std_17)
@@ -169,3 +181,4 @@ add_test(NAME toolchain_proof COMMAND toolchain_proof)
 add_test(NAME proof_schema COMMAND proof_schema)
 add_test(NAME project_schema COMMAND project_schema)
 add_test(NAME materializer_proof COMMAND materializer_proof)
+add_test(NAME live_session_proof COMMAND live_session_proof)

@@ -39,19 +39,20 @@ namespace corytm::native_runtime
         }
     }
 
-    RenderResult materialize (Engine& engine, const ProjectSpec& project, const juce::File& outputDirectory)
+    std::unique_ptr<Edit> buildEdit (Engine& engine, const ProjectSpec& project)
     {
-        if (project.tracks.empty() || project.tracks[0].clips.empty())
-            return { false, {}, 0, 0.0 };
-
         auto edit = Edit::createSingleTrackEdit (engine, Edit::EditRole::forRendering);
+
+        if (project.tracks.empty())
+            return edit;
+
         auto audioTracks = getAudioTracks (*edit);
 
         if (audioTracks.isEmpty())
-            return { false, {}, 0, 0.0 };
+            return edit;
 
         AudioTrack* track = audioTracks[0];
-        double editEndSeconds = 0.0;
+        track->setName (juce::String (project.tracks[0].id));
 
         for (const ClipSpec& clipSpec : project.tracks[0].clips)
         {
@@ -62,13 +63,48 @@ namespace corytm::native_runtime
                             { TimeRange { TimePosition::fromSeconds (clipSpec.startSeconds),
                                          TimePosition::fromSeconds (clipEndSeconds) } },
                             DeleteExistingClips::no);
-
-            editEndSeconds = juce::jmax (editEndSeconds, clipEndSeconds);
         }
 
-        const juce::File destFile = outputDirectory.getChildFile (project.id + ".wav").getNonexistentSibling();
+        return edit;
+    }
 
-        Renderer::Parameters params (*edit);
+    bool moveClip (Edit& edit, const std::string& trackId, const std::string& clipId, double newStartSeconds)
+    {
+        const juce::String targetTrackId (trackId);
+        const juce::String targetClipId (clipId);
+
+        for (AudioTrack* track : getAudioTracks (edit))
+        {
+            if (track->getName() != targetTrackId)
+                continue;
+
+            for (Clip* clip : track->getClips())
+            {
+                if (clip->getName() != targetClipId)
+                    continue;
+
+                clip->setStart (TimePosition::fromSeconds (newStartSeconds), false, true);
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    RenderResult renderEdit (Engine& engine, Edit& edit, const std::string& projectId, const juce::File& outputDirectory)
+    {
+        double editEndSeconds = 0.0;
+
+        for (AudioTrack* track : getAudioTracks (edit))
+            for (Clip* clip : track->getClips())
+                editEndSeconds = juce::jmax (editEndSeconds, clip->getPosition().getEnd().inSeconds());
+
+        if (editEndSeconds <= 0.0)
+            return { false, {}, 0, 0.0 };
+
+        const juce::File destFile = outputDirectory.getChildFile (juce::String (projectId) + ".wav").getNonexistentSibling();
+
+        Renderer::Parameters params (edit);
         params.destFile = destFile;
         params.time = TimeRange { TimePosition::fromSeconds (0.0), TimePosition::fromSeconds (editEndSeconds) };
         params.audioFormat = engine.getAudioFileFormatManager().getWavFormat();
@@ -106,5 +142,15 @@ namespace corytm::native_runtime
         const double peakAmplitude = juce::jmax (std::abs (lowestLeft), std::abs (highestLeft));
 
         return { true, destFile.getFullPathName().toStdString(), (std::uint64_t) reader->lengthInSamples, peakAmplitude };
+    }
+
+    RenderResult materialize (Engine& engine, const ProjectSpec& project, const juce::File& outputDirectory)
+    {
+        if (project.tracks.empty() || project.tracks[0].clips.empty())
+            return { false, {}, 0, 0.0 };
+
+        auto edit = buildEdit (engine, project);
+
+        return renderEdit (engine, *edit, project.id, outputDirectory);
     }
 }

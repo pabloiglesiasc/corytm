@@ -50,4 +50,4 @@ Skills inherit `CLAUDE.md` rather than restating it — no local reminder beyond
 
 ## Current state
 
-Zero skills exist. This is intentional, not a gap to fill preemptively — every future skill earns its place through the creation threshold above, not through this file's existence.
+One skill exists: `ui-ux-review` (created 2026-09-02, alongside ADR-011 and the decision to materialize `docs/product/design.md`'s direction with the first substantial Desktop UI work) — a narrow, procedural checklist for reviewing a user-facing UI change against that document during a Feature's Review step. Every further future skill earns its place through the creation threshold above, not through this file's existence.

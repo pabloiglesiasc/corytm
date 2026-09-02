@@ -1,10 +1,71 @@
+use std::sync::Mutex;
+
+use tauri::async_runtime::Receiver;
+use tauri::{Manager, RunEvent};
+use tauri_plugin_shell::{
+  process::{CommandChild, CommandEvent},
+  ShellExt,
+};
+
 pub mod desktop_proto {
   include!(concat!(env!("OUT_DIR"), "/corytm.schemas.desktop.rs"));
+}
+
+async fn spawn_desktop_sidecar<R: tauri::Runtime>(
+  app: &tauri::AppHandle<R>,
+) -> Result<(Receiver<CommandEvent>, CommandChild, u16, String), String> {
+  let (mut receiver, child) = app
+    .shell()
+    .command("uv")
+    .args([
+      "run",
+      "--project",
+      "../../../backend/core",
+      "corytm",
+      "serve",
+    ])
+    .spawn()
+    .map_err(|error| format!("failed to spawn corytm serve: {error}"))?;
+
+  let mut port: Option<u16> = None;
+  let mut secret: Option<String> = None;
+
+  while port.is_none() || secret.is_none() {
+    let event = receiver
+      .recv()
+      .await
+      .ok_or_else(|| "corytm serve exited before completing the handshake".to_string())?;
+
+    match event {
+      CommandEvent::Stdout(line) => {
+        let line = String::from_utf8_lossy(&line);
+        if let Some(rest) = line.trim().strip_prefix("DESKTOP ") {
+          let mut parts = rest.split(' ');
+          port = parts.next().and_then(|p| p.parse().ok());
+          secret = parts.next().map(str::to_string);
+        }
+      }
+      CommandEvent::Terminated(payload) => {
+        return Err(format!(
+          "corytm serve exited before completing the handshake: {payload:?}"
+        ));
+      }
+      _ => continue,
+    }
+  }
+
+  Ok((
+    receiver,
+    child,
+    port.expect("loop only exits once port is set"),
+    secret.expect("loop only exits once secret is set"),
+  ))
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
+    .plugin(tauri_plugin_shell::init())
     .setup(|app| {
       if cfg!(debug_assertions) {
         app.handle().plugin(
@@ -13,10 +74,40 @@ pub fn run() {
             .build(),
         )?;
       }
+
+      app.manage(Mutex::new(None::<CommandChild>));
+
+      let app_handle = app.handle().clone();
+      tauri::async_runtime::spawn(async move {
+        match spawn_desktop_sidecar(&app_handle).await {
+          Ok((_receiver, child, port, _secret)) => {
+            log::info!("desktop channel sidecar ready on port {port}");
+            *app_handle.state::<Mutex<Option<CommandChild>>>().lock().unwrap() = Some(child);
+          }
+          Err(error) => {
+            log::error!("failed to start desktop channel sidecar: {error}");
+          }
+        }
+      });
+
       Ok(())
     })
-    .run(tauri::generate_context!())
-    .expect("error while running tauri application");
+    .build(tauri::generate_context!())
+    .expect("error while building tauri application")
+    .run(|app_handle, event| {
+      if matches!(event, RunEvent::ExitRequested { .. } | RunEvent::Exit) {
+        if let Some(mut child) = app_handle
+          .state::<Mutex<Option<CommandChild>>>()
+          .lock()
+          .unwrap()
+          .take()
+        {
+          if let Err(error) = child.write(b"SHUTDOWN\n") {
+            log::error!("failed to shut down desktop channel sidecar: {error}");
+          }
+        }
+      }
+    });
 }
 
 #[cfg(test)]
@@ -103,11 +194,12 @@ mod desktop_channel_tests {
 
   use prost::Message;
   use tauri::test::{mock_builder, mock_context, noop_assets};
-  use tauri_plugin_shell::{process::CommandEvent, ShellExt};
+  use tauri_plugin_shell::process::CommandEvent;
   use tokio::io::{AsyncReadExt, AsyncWriteExt};
   use tokio::net::TcpStream;
 
   use crate::desktop_proto::DesktopProofMessage;
+  use crate::spawn_desktop_sidecar;
 
   const TRANSPORT_MAGIC: u32 = 0x636F_7274;
 
@@ -152,47 +244,13 @@ mod desktop_channel_tests {
       .build(mock_context(noop_assets()))
       .expect("failed to build mock app");
 
-    let (mut receiver, mut child) = app
-      .shell()
-      .command("uv")
-      .args([
-        "run",
-        "--project",
-        "../../../backend/core",
-        "corytm",
-        "serve",
-      ])
-      .spawn()
-      .expect("failed to spawn corytm serve");
-
-    let mut port: Option<u16> = None;
-    let mut secret: Option<String> = None;
-
-    while port.is_none() || secret.is_none() {
-      let event = tokio::time::timeout(Duration::from_secs(10), receiver.recv())
-        .await
-        .expect("timed out waiting for the desktop channel handshake")
-        .expect("sidecar process ended before completing the handshake");
-
-      match event {
-        CommandEvent::Stdout(line) => {
-          let line = String::from_utf8_lossy(&line);
-          let line = line.trim();
-          if let Some(rest) = line.strip_prefix("DESKTOP ") {
-            let mut parts = rest.split(' ');
-            port = parts.next().map(|p| p.parse().expect("invalid port"));
-            secret = parts.next().map(str::to_string);
-          }
-        }
-        CommandEvent::Terminated(payload) => {
-          panic!("corytm serve exited before completing the handshake: {payload:?}")
-        }
-        _ => continue,
-      }
-    }
-
-    let port = port.expect("handshake line never arrived");
-    let secret = secret.expect("handshake line never arrived");
+    let (mut receiver, mut child, port, secret) = tokio::time::timeout(
+      Duration::from_secs(10),
+      spawn_desktop_sidecar(app.handle()),
+    )
+    .await
+    .expect("timed out waiting for the desktop channel handshake")
+    .expect("failed to spawn corytm serve and complete its handshake");
 
     let mut stream = TcpStream::connect(("127.0.0.1", port))
       .await

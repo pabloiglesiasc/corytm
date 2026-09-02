@@ -36,6 +36,6 @@ Current milestone and work state are tracked in `status.md` and the correspondin
 2. Ready work whose dependencies are satisfied
 3. Work that unlocks other work
 4. Work that reduces material risk or uncertainty
-5. The smallest coherent vertical step
+5. The largest coherent vertical increment that safely fits one session (`docs/project/format.md`'s Sizing)
 
-Never by numeric ID order. Never select blocked work. Never select work that requires an unresolved protected decision (`CLAUDE.md` §5). When several Tasks are reasonable, recommend one with a brief reason.
+Never by numeric ID order. Never select blocked work. Never select work that requires an unresolved protected decision (`CLAUDE.md` §5). When several Features are reasonable, recommend one with a brief reason.

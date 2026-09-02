@@ -8,7 +8,7 @@ check-all: clean check
 
 check-python:
 	mkdir -p src/backend/core/src/corytm/generated
-	cd src/backend/core && uv run python -m grpc_tools.protoc -I ../../schemas --python_out=src/corytm/generated --pyi_out=src/corytm/generated ../../schemas/proof.proto ../../schemas/project.proto
+	cd src/backend/core && uv run python -m grpc_tools.protoc -I ../../schemas --python_out=src/corytm/generated --pyi_out=src/corytm/generated ../../schemas/proof.proto ../../schemas/project.proto ../../schemas/desktop.proto
 	cd src/backend/core && uv run pytest -m "not transport"
 	cd src/backend/core && uv run pyright
 	cd src/backend/core && uv run ruff check .

@@ -7,11 +7,13 @@ installed `corytm` command.
 """
 
 import asyncio
+import sys
 from pathlib import Path
 
 from corytm.engine.clip import AudioClip
 from corytm.engine.project import Project
 from corytm.engine.track import AudioTrack
+from corytm.runtime.desktop import serve_desktop_channel
 from corytm.runtime.session import materialize_project
 
 
@@ -22,10 +24,16 @@ def _build_first_sound_project() -> Project:
 
 
 def main() -> None:
-    """Render the fixture project and print the rendered outcome.
+    """Render the fixture project, or serve the Desktop channel.
 
-    Writes the rendered WAV file into the current working directory.
+    With no arguments, writes the rendered WAV file into the current
+    working directory. Given the single argument `serve`, instead runs
+    as ADR-010's Desktop-facing sidecar until shutdown.
     """
+    if sys.argv[1:] == ["serve"]:
+        asyncio.run(serve_desktop_channel())
+        return
+
     project = _build_first_sound_project()
     output_directory = Path.cwd()
 

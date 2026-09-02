@@ -54,10 +54,47 @@ message ClipMovedEvent {
   double peak_amplitude = 9;
 }
 
+message CreateProjectCommand {
+  uint32 schema_version = 1;
+}
+
+message ProjectCreatedEvent {
+  uint32 schema_version = 1;
+  string project_id = 2;
+}
+
+message SaveProjectCommand {
+  uint32 schema_version = 1;
+  string file_path = 2;
+}
+
+message ProjectSavedEvent {
+  uint32 schema_version = 1;
+  string project_id = 2;
+  string file_path = 3;
+}
+
+message OpenProjectCommand {
+  uint32 schema_version = 1;
+  string file_path = 2;
+}
+
+message ProjectOpenedEvent {
+  uint32 schema_version = 1;
+  string project_id = 2;
+  string file_path = 3;
+  uint32 track_count = 4;
+  uint64 rendered_sample_count = 5;
+  double peak_amplitude = 6;
+}
+
 message Command {
   oneof command {
     MaterializeProjectCommand materialize = 1;
     MoveClipCommand move_clip = 2;
+    CreateProjectCommand create_project = 3;
+    SaveProjectCommand save_project = 4;
+    OpenProjectCommand open_project = 5;
   }
 }
 
@@ -65,5 +102,8 @@ message Event {
   oneof event {
     ProjectRenderedEvent project_rendered = 1;
     ClipMovedEvent clip_moved = 2;
+    ProjectCreatedEvent project_created = 3;
+    ProjectSavedEvent project_saved = 4;
+    ProjectOpenedEvent project_opened = 5;
   }
 }

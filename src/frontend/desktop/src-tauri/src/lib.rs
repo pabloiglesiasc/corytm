@@ -66,11 +66,13 @@ struct MoveClipResult {
 ///
 /// Connects to the already-spawned sidecar's Desktop channel (ADR-010)
 /// using the port/secret `spawn_desktop_sidecar` captured into managed
-/// state, authenticates, sends one `MoveClipCommand` matching the
-/// Python core's own hardcoded fixture project exactly, and decodes
-/// the `ClipMovedEvent` it returns. The Desktop channel server serves
-/// exactly one command per app session (FT-022's own scope), so this
-/// is expected to succeed at most once.
+/// state, authenticates, sends one `Command`-enveloped `MoveClipCommand`
+/// matching the Python core's own hardcoded fixture project exactly,
+/// and decodes the enveloped `ClipMovedEvent` it returns. The Desktop
+/// channel server accepts exactly one client connection per app
+/// session (unchanged by FT-023, which only made that one connection
+/// itself carry a sequence of commands), so this is expected to
+/// succeed at most once.
 #[tauri::command]
 async fn move_clip(
   state: tauri::State<'_, Mutex<Option<DesktopChannel>>>,
@@ -89,12 +91,16 @@ async fn move_clip(
     .await
     .map_err(|error| format!("failed to authenticate with the desktop channel: {error}"))?;
 
-  let command = project_proto::MoveClipCommand {
-    schema_version: 1,
-    project_id: "desktop-fixture".to_string(),
-    track_id: "track-1".to_string(),
-    clip_id: "clip-1".to_string(),
-    new_start_seconds: 1.0,
+  let command = project_proto::Command {
+    command: Some(project_proto::command::Command::MoveClip(
+      project_proto::MoveClipCommand {
+        schema_version: 1,
+        project_id: "desktop-fixture".to_string(),
+        track_id: "track-1".to_string(),
+        clip_id: "clip-1".to_string(),
+        new_start_seconds: 1.0,
+      },
+    )),
   };
   write_frame(&mut stream, &command.encode_to_vec())
     .await
@@ -103,8 +109,11 @@ async fn move_clip(
   let event_bytes = read_frame(&mut stream)
     .await
     .map_err(|error| format!("failed to read the clip-moved event: {error}"))?;
-  let event = project_proto::ClipMovedEvent::decode(event_bytes.as_slice())
+  let event = project_proto::Event::decode(event_bytes.as_slice())
     .map_err(|error| format!("failed to decode the clip-moved event: {error}"))?;
+  let Some(project_proto::event::Event::ClipMoved(event)) = event.event else {
+    return Err("expected a clip-moved event".to_string());
+  };
 
   Ok(MoveClipResult {
     moved: event.moved,

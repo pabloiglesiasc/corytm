@@ -3,7 +3,7 @@ import sys
 
 import pytest
 
-from corytm.generated.project_pb2 import MoveClipCommand
+from corytm.generated.project_pb2 import Command, MoveClipCommand
 from corytm.runtime.desktop import serve_desktop_channel
 from corytm.runtime.transport import write_frame
 
@@ -46,12 +46,14 @@ async def _scenario() -> None:
         write_frame(writer, secret.encode("utf-8"))
         await writer.drain()
 
-        command = MoveClipCommand(
-            schema_version=1,
-            project_id="desktop-fixture",
-            track_id="track-1",
-            clip_id="no-such-clip",
-            new_start_seconds=1.0,
+        command = Command(
+            move_clip=MoveClipCommand(
+                schema_version=1,
+                project_id="desktop-fixture",
+                track_id="track-1",
+                clip_id="no-such-clip",
+                new_start_seconds=1.0,
+            )
         )
         write_frame(writer, command.SerializeToString())
         await writer.drain()

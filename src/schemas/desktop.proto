@@ -1,0 +1,8 @@
+syntax = "proto3";
+
+package corytm.schemas.desktop;
+
+message DesktopProofMessage {
+  uint32 schema_version = 1;
+  string payload = 2;
+}

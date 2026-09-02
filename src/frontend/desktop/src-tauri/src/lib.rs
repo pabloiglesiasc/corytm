@@ -1,3 +1,7 @@
+pub mod desktop_proto {
+  include!(concat!(env!("OUT_DIR"), "/corytm.schemas.desktop.rs"));
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
@@ -70,5 +74,25 @@ mod tests {
         break;
       }
     }
+  }
+}
+
+#[cfg(test)]
+mod desktop_proto_tests {
+  use prost::Message;
+
+  use crate::desktop_proto::DesktopProofMessage;
+
+  #[test]
+  fn desktop_proof_message_round_trips() {
+    let original = DesktopProofMessage {
+      schema_version: 1,
+      payload: "corytm-desktop-protobuf-toolchain-proof".to_string(),
+    };
+
+    let encoded = original.encode_to_vec();
+    let decoded = DesktopProofMessage::decode(encoded.as_slice()).expect("failed to decode");
+
+    assert_eq!(decoded, original);
   }
 }

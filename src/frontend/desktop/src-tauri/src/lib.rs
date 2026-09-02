@@ -9,6 +9,7 @@ use tauri_plugin_shell::{
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
+use tokio::sync::Mutex as AsyncMutex;
 
 pub mod desktop_proto {
   include!(concat!(env!("OUT_DIR"), "/corytm.schemas.desktop.rs"));
@@ -41,13 +42,60 @@ async fn read_frame(stream: &mut TcpStream) -> std::io::Result<Vec<u8>> {
   Ok(payload)
 }
 
-/// The Desktop channel's port and per-launch secret, captured once
-/// `spawn_desktop_sidecar` completes the handshake, so any later
-/// command can open its own authenticated connection to it.
-#[derive(Clone)]
-struct DesktopChannel {
-  port: u16,
-  secret: String,
+/// The Desktop channel's single, held connection for the life of the
+/// app session.
+///
+/// `serve_desktop_channel` (Python core) accepts exactly one client
+/// TCP connection for the life of the sidecar process, then dispatches
+/// a sequence of `Command`-enveloped commands over it until the client
+/// disconnects (ADR-010, extended by FT-023). Every command this
+/// Feature adds shares this one connection instead of each opening its
+/// own — reused connect-per-call, as the original `move_clip` did,
+/// only ever worked because it was the sole command ever invoked; a
+/// second command reopening a new connection would find the server no
+/// longer accepting one. `run()`'s setup opens and authenticates this
+/// connection once, right after `spawn_desktop_sidecar`'s handshake.
+type DesktopConnection = AsyncMutex<Option<TcpStream>>;
+
+/// Connect to the Desktop channel at `port` and authenticate with
+/// `secret`, per ADR-010's handshake.
+async fn connect_desktop_channel(port: u16, secret: &str) -> Result<TcpStream, String> {
+  let mut stream = TcpStream::connect(("127.0.0.1", port))
+    .await
+    .map_err(|error| format!("failed to connect to the desktop channel: {error}"))?;
+
+  write_frame(&mut stream, secret.as_bytes())
+    .await
+    .map_err(|error| format!("failed to authenticate with the desktop channel: {error}"))?;
+
+  Ok(stream)
+}
+
+/// Send one `Command` over the held Desktop channel connection and
+/// return the resulting `Event`.
+///
+/// Shared by every command this Feature (and `move_clip`, migrated
+/// onto it) sends, so the connection is genuinely reused rather than
+/// reopened per call — see [`DesktopConnection`].
+async fn send_command(
+  state: &tauri::State<'_, DesktopConnection>,
+  command: project_proto::Command,
+) -> Result<project_proto::Event, String> {
+  let mut guard = state.lock().await;
+  let stream = guard
+    .as_mut()
+    .ok_or_else(|| "desktop channel is not connected yet".to_string())?;
+
+  write_frame(stream, &command.encode_to_vec())
+    .await
+    .map_err(|error| format!("failed to send command: {error}"))?;
+
+  let event_bytes = read_frame(stream)
+    .await
+    .map_err(|error| format!("failed to read event: {error}"))?;
+
+  project_proto::Event::decode(event_bytes.as_slice())
+    .map_err(|error| format!("failed to decode event: {error}"))
 }
 
 /// A `ClipMovedEvent`'s fields, reshaped for JSON serialization back
@@ -61,36 +109,11 @@ struct MoveClipResult {
   peak_amplitude: f64,
 }
 
-/// Send the one hardcoded `MoveClipCommand` this Feature triggers, and
-/// return the resulting `ClipMovedEvent`'s fields.
-///
-/// Connects to the already-spawned sidecar's Desktop channel (ADR-010)
-/// using the port/secret `spawn_desktop_sidecar` captured into managed
-/// state, authenticates, sends one `Command`-enveloped `MoveClipCommand`
-/// matching the Python core's own hardcoded fixture project exactly,
-/// and decodes the enveloped `ClipMovedEvent` it returns. The Desktop
-/// channel server accepts exactly one client connection per app
-/// session (unchanged by FT-023, which only made that one connection
-/// itself carry a sequence of commands), so this is expected to
-/// succeed at most once.
+/// Send the one hardcoded `MoveClipCommand` this project's fixture
+/// project supports, and return the resulting `ClipMovedEvent`'s
+/// fields.
 #[tauri::command]
-async fn move_clip(
-  state: tauri::State<'_, Mutex<Option<DesktopChannel>>>,
-) -> Result<MoveClipResult, String> {
-  let channel = state
-    .lock()
-    .unwrap()
-    .clone()
-    .ok_or_else(|| "desktop channel is not ready yet".to_string())?;
-
-  let mut stream = TcpStream::connect(("127.0.0.1", channel.port))
-    .await
-    .map_err(|error| format!("failed to connect to the desktop channel: {error}"))?;
-
-  write_frame(&mut stream, channel.secret.as_bytes())
-    .await
-    .map_err(|error| format!("failed to authenticate with the desktop channel: {error}"))?;
-
+async fn move_clip(state: tauri::State<'_, DesktopConnection>) -> Result<MoveClipResult, String> {
   let command = project_proto::Command {
     command: Some(project_proto::command::Command::MoveClip(
       project_proto::MoveClipCommand {
@@ -102,15 +125,7 @@ async fn move_clip(
       },
     )),
   };
-  write_frame(&mut stream, &command.encode_to_vec())
-    .await
-    .map_err(|error| format!("failed to send the move-clip command: {error}"))?;
-
-  let event_bytes = read_frame(&mut stream)
-    .await
-    .map_err(|error| format!("failed to read the clip-moved event: {error}"))?;
-  let event = project_proto::Event::decode(event_bytes.as_slice())
-    .map_err(|error| format!("failed to decode the clip-moved event: {error}"))?;
+  let event = send_command(&state, command).await?;
   let Some(project_proto::event::Event::ClipMoved(event)) = event.event else {
     return Err("expected a clip-moved event".to_string());
   };
@@ -119,6 +134,108 @@ async fn move_clip(
     moved: event.moved,
     start_seconds: event.start_seconds,
     rendered_file_path: event.rendered_file_path,
+    rendered_sample_count: event.rendered_sample_count,
+    peak_amplitude: event.peak_amplitude,
+  })
+}
+
+/// A `ProjectCreatedEvent`'s fields, reshaped for JSON serialization
+/// back to the frontend.
+#[derive(serde::Serialize)]
+struct ProjectCreatedResult {
+  project_id: String,
+}
+
+/// Create a fresh, empty project in the session's current-project slot.
+#[tauri::command]
+async fn create_project(
+  state: tauri::State<'_, DesktopConnection>,
+) -> Result<ProjectCreatedResult, String> {
+  let command = project_proto::Command {
+    command: Some(project_proto::command::Command::CreateProject(
+      project_proto::CreateProjectCommand { schema_version: 1 },
+    )),
+  };
+  let event = send_command(&state, command).await?;
+  let Some(project_proto::event::Event::ProjectCreated(event)) = event.event else {
+    return Err("expected a project-created event".to_string());
+  };
+
+  Ok(ProjectCreatedResult {
+    project_id: event.project_id,
+  })
+}
+
+/// A `ProjectSavedEvent`'s fields, reshaped for JSON serialization
+/// back to the frontend.
+#[derive(serde::Serialize)]
+struct ProjectSavedResult {
+  project_id: String,
+  file_path: String,
+}
+
+/// Save the session's current project to `file_path` via ADR-011's
+/// JSON envelope.
+#[tauri::command]
+async fn save_project(
+  state: tauri::State<'_, DesktopConnection>,
+  file_path: String,
+) -> Result<ProjectSavedResult, String> {
+  let command = project_proto::Command {
+    command: Some(project_proto::command::Command::SaveProject(
+      project_proto::SaveProjectCommand {
+        schema_version: 1,
+        file_path,
+      },
+    )),
+  };
+  let event = send_command(&state, command).await?;
+  let Some(project_proto::event::Event::ProjectSaved(event)) = event.event else {
+    return Err("expected a project-saved event".to_string());
+  };
+
+  Ok(ProjectSavedResult {
+    project_id: event.project_id,
+    file_path: event.file_path,
+  })
+}
+
+/// A `ProjectOpenedEvent`'s fields, reshaped for JSON serialization
+/// back to the frontend.
+#[derive(serde::Serialize)]
+struct ProjectOpenedResult {
+  project_id: String,
+  file_path: String,
+  track_count: u32,
+  rendered_sample_count: u64,
+  peak_amplitude: f64,
+}
+
+/// Load `file_path` via ADR-011's JSON envelope, replace the session's
+/// current project with it, and re-materialize it through the Native
+/// Audio Runtime.
+#[tauri::command]
+async fn open_project(
+  state: tauri::State<'_, DesktopConnection>,
+  file_path: String,
+) -> Result<ProjectOpenedResult, String> {
+  let command = project_proto::Command {
+    command: Some(project_proto::command::Command::OpenProject(
+      project_proto::OpenProjectCommand {
+        schema_version: 1,
+        file_path,
+      },
+    )),
+  };
+  let event = send_command(&state, command).await?;
+  let Some(project_proto::event::Event::ProjectOpened(event)) = event.event else {
+    return Err("expected a project-opened event".to_string());
+  };
+
+  Ok(ProjectOpenedResult {
+    project_id: event.project_id,
+    file_path: event.file_path,
+    track_count: event.track_count,
     rendered_sample_count: event.rendered_sample_count,
     peak_amplitude: event.peak_amplitude,
   })
@@ -179,7 +296,13 @@ async fn spawn_desktop_sidecar<R: tauri::Runtime>(
 pub fn run() {
   tauri::Builder::default()
     .plugin(tauri_plugin_shell::init())
-    .invoke_handler(tauri::generate_handler![move_clip])
+    .plugin(tauri_plugin_dialog::init())
+    .invoke_handler(tauri::generate_handler![
+      move_clip,
+      create_project,
+      save_project,
+      open_project
+    ])
     .setup(|app| {
       if cfg!(debug_assertions) {
         app.handle().plugin(
@@ -190,7 +313,7 @@ pub fn run() {
       }
 
       app.manage(Mutex::new(None::<CommandChild>));
-      app.manage(Mutex::new(None::<DesktopChannel>));
+      app.manage(DesktopConnection::new(None));
 
       let app_handle = app.handle().clone();
       tauri::async_runtime::spawn(async move {
@@ -198,8 +321,15 @@ pub fn run() {
           Ok((_receiver, child, port, secret)) => {
             log::info!("desktop channel sidecar ready on port {port}");
             *app_handle.state::<Mutex<Option<CommandChild>>>().lock().unwrap() = Some(child);
-            *app_handle.state::<Mutex<Option<DesktopChannel>>>().lock().unwrap() =
-              Some(DesktopChannel { port, secret });
+
+            match connect_desktop_channel(port, &secret).await {
+              Ok(stream) => {
+                *app_handle.state::<DesktopConnection>().lock().await = Some(stream);
+              }
+              Err(error) => {
+                log::error!("failed to connect to desktop channel: {error}");
+              }
+            }
           }
           Err(error) => {
             log::error!("failed to start desktop channel sidecar: {error}");
@@ -213,6 +343,12 @@ pub fn run() {
     .expect("error while building tauri application")
     .run(|app_handle, event| {
       if matches!(event, RunEvent::ExitRequested { .. } | RunEvent::Exit) {
+        // The Python session loop only starts reading stdin for
+        // `SHUTDOWN` once its Desktop channel connection closes (it
+        // stays blocked reading the next command otherwise) — drop
+        // our held connection first so it can reach that point.
+        app_handle.state::<DesktopConnection>().blocking_lock().take();
+
         if let Some(mut child) = app_handle
           .state::<Mutex<Option<CommandChild>>>()
           .lock()
@@ -307,14 +443,16 @@ mod desktop_proto_tests {
 
 #[cfg(test)]
 mod desktop_channel_tests {
-  use std::sync::Mutex;
   use std::time::Duration;
 
   use tauri::test::{mock_builder, mock_context, noop_assets};
   use tauri::Manager;
   use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 
-  use crate::{move_clip, spawn_desktop_sidecar, DesktopChannel};
+  use crate::{
+    connect_desktop_channel, create_project, move_clip, open_project, save_project,
+    spawn_desktop_sidecar, DesktopConnection,
+  };
 
   /// Kills the wrapped sidecar on drop unless [`Self::disarm`] already
   /// took it.
@@ -360,7 +498,7 @@ mod desktop_channel_tests {
       .build(mock_context(noop_assets()))
       .expect("failed to build mock app");
 
-    app.manage(Mutex::new(None::<DesktopChannel>));
+    app.manage(DesktopConnection::new(None));
 
     let (mut receiver, child, port, secret) = tokio::time::timeout(
       Duration::from_secs(10),
@@ -371,8 +509,10 @@ mod desktop_channel_tests {
     .expect("failed to spawn corytm serve and complete its handshake");
     let mut sidecar = SidecarGuard(Some(child));
 
-    *app.state::<Mutex<Option<DesktopChannel>>>().lock().unwrap() =
-      Some(DesktopChannel { port, secret });
+    let stream = connect_desktop_channel(port, &secret)
+      .await
+      .expect("failed to connect to the desktop channel");
+    *app.state::<DesktopConnection>().lock().await = Some(stream);
 
     let result = tokio::time::timeout(Duration::from_secs(60), move_clip(app.state()))
       .await
@@ -389,6 +529,145 @@ mod desktop_channel_tests {
       result.peak_amplitude > 0.0,
       "expected a real non-silent render"
     );
+
+    app.state::<DesktopConnection>().lock().await.take();
+    sidecar
+      .write(b"SHUTDOWN\n")
+      .expect("failed to write SHUTDOWN");
+
+    loop {
+      let event = tokio::time::timeout(Duration::from_secs(10), receiver.recv())
+        .await
+        .expect("timed out waiting for the sidecar to terminate")
+        .expect("sidecar event channel closed before terminating");
+
+      if let CommandEvent::Terminated(payload) = event {
+        assert_eq!(payload.code, Some(0));
+        break;
+      }
+    }
+
+    sidecar.disarm();
+  }
+
+  /// Confirms `path` genuinely round-trips through the real,
+  /// authoritative `corytm.engine.persistence.load_project` — an
+  /// independent check of the ADR-011 envelope this Rust test's own
+  /// `save_project` call wrote, not merely that some JSON was written.
+  fn assert_round_trips_via_persistence(path: &std::path::Path) {
+    let script_path = std::env::temp_dir().join(format!(
+      "corytm-desktop-test-roundtrip-{}.py",
+      std::process::id()
+    ));
+    std::fs::write(
+      &script_path,
+      "import sys\nfrom pathlib import Path\nfrom corytm.engine.persistence import load_project\nload_project(Path(sys.argv[1]))\n",
+    )
+    .expect("failed to write the round-trip check script");
+
+    let output = std::process::Command::new("uv")
+      .args(["run", "--project", "../../../backend/core", "python"])
+      .arg(&script_path)
+      .arg(path)
+      .output()
+      .expect("failed to run the persistence round-trip check");
+
+    let _ = std::fs::remove_file(&script_path);
+
+    assert!(
+      output.status.success(),
+      "saved file failed to round-trip via persistence.load_project: {}",
+      String::from_utf8_lossy(&output.stderr)
+    );
+  }
+
+  fn temp_json_path(label: &str) -> std::path::PathBuf {
+    let unique = std::time::SystemTime::now()
+      .duration_since(std::time::UNIX_EPOCH)
+      .expect("system clock before UNIX_EPOCH")
+      .as_nanos();
+    std::env::temp_dir().join(format!("corytm-desktop-test-{label}-{unique}.json"))
+  }
+
+  #[tokio::test]
+  async fn create_save_open_move_all_succeed_over_one_held_connection() {
+    let app = mock_builder()
+      .plugin(tauri_plugin_shell::init())
+      .build(mock_context(noop_assets()))
+      .expect("failed to build mock app");
+
+    app.manage(DesktopConnection::new(None));
+
+    let (mut receiver, child, port, secret) = tokio::time::timeout(
+      Duration::from_secs(10),
+      spawn_desktop_sidecar(app.handle()),
+    )
+    .await
+    .expect("timed out waiting for the desktop channel handshake")
+    .expect("failed to spawn corytm serve and complete its handshake");
+    let mut sidecar = SidecarGuard(Some(child));
+
+    let stream = connect_desktop_channel(port, &secret)
+      .await
+      .expect("failed to connect to the desktop channel");
+    *app.state::<DesktopConnection>().lock().await = Some(stream);
+
+    let created = tokio::time::timeout(Duration::from_secs(30), create_project(app.state()))
+      .await
+      .expect("timed out waiting for create_project")
+      .expect("create_project failed");
+    assert!(!created.project_id.is_empty(), "expected a real project id");
+
+    let save_path = temp_json_path("save");
+    let saved = tokio::time::timeout(
+      Duration::from_secs(30),
+      save_project(app.state(), save_path.to_string_lossy().into_owned()),
+    )
+    .await
+    .expect("timed out waiting for save_project")
+    .expect("save_project failed");
+    assert_eq!(saved.project_id, created.project_id);
+    assert_eq!(saved.file_path, save_path.to_string_lossy());
+
+    assert_round_trips_via_persistence(&save_path);
+    let _ = std::fs::remove_file(&save_path);
+
+    let fixture_path = temp_json_path("fixture");
+    std::fs::write(
+      &fixture_path,
+      r#"{"schema_version":1,"project":{"schema_version":1,"id":"fixture-project","tracks":[{"schema_version":1,"id":"track-1","clips":[{"schema_version":1,"id":"clip-1","start_seconds":0.0,"duration_seconds":2.0}]}]}}"#,
+    )
+    .expect("failed to write the fixture project file");
+
+    let opened = tokio::time::timeout(
+      Duration::from_secs(60),
+      open_project(app.state(), fixture_path.to_string_lossy().into_owned()),
+    )
+    .await
+    .expect("timed out waiting for open_project")
+    .expect("open_project failed");
+    assert_eq!(opened.track_count, 1);
+    assert!(
+      opened.rendered_sample_count > 0,
+      "expected a real render sample count from the opened project"
+    );
+    assert!(
+      opened.peak_amplitude > 0.0,
+      "expected a real non-silent render from the opened project"
+    );
+    let _ = std::fs::remove_file(&fixture_path);
+
+    let moved = tokio::time::timeout(Duration::from_secs(60), move_clip(app.state()))
+      .await
+      .expect("timed out waiting for move_clip")
+      .expect("move_clip failed");
+    assert!(
+      moved.moved,
+      "expected the opened fixture's clip to genuinely move over the same held connection"
+    );
+    assert_eq!(moved.start_seconds, 1.0);
+
+    app.state::<DesktopConnection>().lock().await.take();
 
     sidecar
       .write(b"SHUTDOWN\n")

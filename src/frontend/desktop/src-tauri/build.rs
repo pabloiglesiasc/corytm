@@ -7,7 +7,12 @@ fn main() {
   tauri_build::try_build(
     tauri_build::Attributes::new()
       .windows_attributes(tauri_build::WindowsAttributes::new_without_app_manifest())
-      .app_manifest(tauri_build::AppManifest::new().commands(&["move_clip"])),
+      .app_manifest(tauri_build::AppManifest::new().commands(&[
+        "move_clip",
+        "create_project",
+        "save_project",
+        "open_project",
+      ])),
   )
   .expect("failed to run tauri-build");
 

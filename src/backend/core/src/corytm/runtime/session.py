@@ -63,6 +63,18 @@ async def _connected_native_runtime(
     waits for the child process to exit, always tearing down the process
     and listening socket, including on error.
 
+    `native_runtime`'s own process exit code reflects whether every
+    command in the session rendered non-silent output, not merely
+    whether it ran correctly — a project with no tracks legitimately
+    renders nothing and exits non-zero, even though the `Event` already
+    sent for that command faithfully reports it (zero sample count,
+    zero peak amplitude). That is real, already-delivered information,
+    not a process failure, so this context manager never raises on
+    exit code alone: a caller that successfully read every `Event` it
+    expected already knows the outcome; only a genuine transport
+    failure (the process never authenticating, an event never
+    arriving) is reported as an error here.
+
     Args:
         output_directory: Directory the native process should write its
             rendered output into.
@@ -73,10 +85,10 @@ async def _connected_native_runtime(
     Raises:
         FileNotFoundError: `native_runtime_executable()` doesn't exist —
             the native build hasn't been run.
-        RuntimeError: The spawned process failed to authenticate, or
-            exited with a non-zero return code.
+        RuntimeError: The spawned process failed to authenticate.
         TimeoutError: The connection or handshake wasn't completed
-            within the configured timeout.
+            within the configured timeout, or the process didn't exit
+            promptly once its connection closed.
     """
     executable = native_runtime_executable()
 
@@ -120,11 +132,7 @@ async def _connected_native_runtime(
         await writer.wait_closed()
         writer = None
 
-        return_code = await asyncio.wait_for(
-            process.wait(), timeout=_EVENT_TIMEOUT_SECONDS
-        )
-        if return_code != 0:
-            raise RuntimeError(f"native_runtime exited with code {return_code}")
+        await asyncio.wait_for(process.wait(), timeout=_EVENT_TIMEOUT_SECONDS)
     finally:
         # `Server.wait_closed()` (Python 3.12.1+) waits for the listening
         # socket to close *and* for every accepted connection to drop.
@@ -178,8 +186,7 @@ async def materialize_project(
     Raises:
         FileNotFoundError: `native_runtime_executable()` doesn't exist —
             the native build hasn't been run.
-        RuntimeError: The spawned process failed to authenticate, or
-            exited with a non-zero return code.
+        RuntimeError: The spawned process failed to authenticate.
         TimeoutError: The connection, handshake, or event wasn't
             received within the configured timeout.
     """
@@ -274,8 +281,7 @@ async def materialize_then_move_clips(
     Raises:
         FileNotFoundError: `native_runtime_executable()` doesn't exist —
             the native build hasn't been run.
-        RuntimeError: The spawned process failed to authenticate, or
-            exited with a non-zero return code.
+        RuntimeError: The spawned process failed to authenticate.
         TimeoutError: The connection, handshake, or an event wasn't
             received within the configured timeout.
     """

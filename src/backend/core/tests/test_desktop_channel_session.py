@@ -207,6 +207,101 @@ def test_open_project_re_materializes_it_and_move_clip_still_applies(
 
 
 @pytest.mark.transport
+def test_open_project_after_relaunch_with_no_tracks_succeeds(tmp_path: Path) -> None:
+    """Reproduces the real New -> Save -> quit -> relaunch -> Open path.
+
+    `test_create_and_save_project_over_one_connection` already proves
+    create+save alone; this proves the specific combination it doesn't
+    cover — opening a file that was saved from a `create_project`
+    result (genuinely zero tracks) in a second, independent session,
+    mirroring a real quit-and-relaunch rather than reusing one
+    connection throughout.
+    """
+    save_path = tmp_path / "empty.corytm.json"
+
+    async def _create_and_save() -> None:
+        stdout = _CapturingStdout()
+        original_stdout = sys.stdout
+        original_stdin = sys.stdin
+        sys.stdout = stdout
+        sys.stdin = _FakeStdin()
+        try:
+            server_task = asyncio.create_task(serve_desktop_channel())
+
+            port, secret = await asyncio.wait_for(_read_handshake(stdout), timeout=5)
+
+            reader, writer = await asyncio.open_connection("127.0.0.1", port)
+            write_frame(writer, secret.encode("utf-8"))
+            await writer.drain()
+
+            created = await _exchange(
+                writer,
+                reader,
+                Command(create_project=CreateProjectCommand(schema_version=1)),
+            )
+            assert created.WhichOneof("event") == "project_created"
+
+            saved = await _exchange(
+                writer,
+                reader,
+                Command(
+                    save_project=SaveProjectCommand(
+                        schema_version=1, file_path=str(save_path)
+                    )
+                ),
+            )
+            assert saved.WhichOneof("event") == "project_saved"
+
+            writer.close()
+            await writer.wait_closed()
+
+            await asyncio.wait_for(server_task, timeout=5)
+        finally:
+            sys.stdout = original_stdout
+            sys.stdin = original_stdin
+
+    async def _relaunch_and_open() -> None:
+        stdout = _CapturingStdout()
+        original_stdout = sys.stdout
+        original_stdin = sys.stdin
+        sys.stdout = stdout
+        sys.stdin = _FakeStdin()
+        try:
+            server_task = asyncio.create_task(serve_desktop_channel())
+
+            port, secret = await asyncio.wait_for(_read_handshake(stdout), timeout=5)
+
+            reader, writer = await asyncio.open_connection("127.0.0.1", port)
+            write_frame(writer, secret.encode("utf-8"))
+            await writer.drain()
+
+            opened = await _exchange(
+                writer,
+                reader,
+                Command(
+                    open_project=OpenProjectCommand(
+                        schema_version=1, file_path=str(save_path)
+                    )
+                ),
+            )
+            assert opened.WhichOneof("event") == "project_opened"
+            assert opened.project_opened.track_count == 0
+            assert opened.project_opened.rendered_sample_count == 0
+            assert opened.project_opened.peak_amplitude == 0.0
+
+            writer.close()
+            await writer.wait_closed()
+
+            await asyncio.wait_for(server_task, timeout=5)
+        finally:
+            sys.stdout = original_stdout
+            sys.stdin = original_stdin
+
+    asyncio.run(asyncio.wait_for(_create_and_save(), timeout=20))
+    asyncio.run(asyncio.wait_for(_relaunch_and_open(), timeout=20))
+
+
+@pytest.mark.transport
 def test_move_clip_still_works_without_any_prior_command() -> None:
     async def _scenario() -> None:
         stdout = _CapturingStdout()

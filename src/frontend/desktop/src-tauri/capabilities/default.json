@@ -7,6 +7,10 @@
   ],
   "permissions": [
     "core:default",
-    "allow-move-clip"
+    "dialog:default",
+    "allow-move-clip",
+    "allow-create-project",
+    "allow-save-project",
+    "allow-open-project"
   ]
 }

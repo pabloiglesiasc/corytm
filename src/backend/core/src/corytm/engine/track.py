@@ -9,8 +9,9 @@ class AudioTrack(BaseModel):
     """A single timeline lane holding zero or more audio clips.
 
     Frozen: edits produce a new `AudioTrack`, never in-place mutation.
-    Clip overlap and ordering are not validated here — the Engine has no
-    editing behavior yet beyond construction.
+    Clip overlap and ordering are not validated on construction or on
+    `with_clip_moved` — only `with_clip_appended` guarantees its own
+    new clip doesn't overlap this track's existing ones.
 
     Attributes:
         id: Stable identifier, unique within its owning `Project`.
@@ -64,3 +65,35 @@ class AudioTrack(BaseModel):
             raise ValueError(f"no clip with id {clip_id!r} in track {self.id!r}")
 
         return self.model_copy(update={"clips": tuple(updated_clips)})
+
+    def with_clip_appended(
+        self, *, clip_id: str, duration_seconds: float
+    ) -> AudioTrack:
+        """Return a new track with a clip appended after its existing clips.
+
+        The new clip's start position is computed, not caller-supplied:
+        immediately after the last existing clip ends, or at the
+        timeline start if this track has none — placing authored
+        clips without overlap by construction.
+
+        Args:
+            clip_id: Id for the new clip. Uniqueness is not validated
+                here — the caller controls id generation.
+            duration_seconds: Length of the new clip, in seconds.
+
+        Returns:
+            A new `AudioTrack` with the appended clip; existing clips
+            are unchanged.
+
+        Raises:
+            pydantic.ValidationError: `duration_seconds` is invalid.
+        """
+        start_seconds = (
+            0.0
+            if not self.clips
+            else max(clip.start_seconds + clip.duration_seconds for clip in self.clips)
+        )
+        new_clip = AudioClip(
+            id=clip_id, start_seconds=start_seconds, duration_seconds=duration_seconds
+        )
+        return self.model_copy(update={"clips": (*self.clips, new_clip)})

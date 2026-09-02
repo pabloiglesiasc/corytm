@@ -8,11 +8,12 @@ existing sidecar stdout lifecycle channel. Accepts one authenticated
 client connection and dispatches a sequence of `project.proto`
 `Command`-enveloped commands against one in-memory "current project"
 slot — `CreateProjectCommand`/`SaveProjectCommand`/`OpenProjectCommand`
-(backed by ADR-011's `corytm.engine.persistence` module) and the
-pre-existing `MoveClipCommand` — mirroring the multi-command session
-loop `native_runtime.cpp` already implements (FT-017/TK-018), reusing
-`project.proto`'s message types by reference per ADR-010 rather than a
-new Desktop-owned envelope.
+(backed by ADR-011's `corytm.engine.persistence` module),
+`AddAudioTrackCommand`/`AddAudioClipCommand` (EP-012's track/clip
+authoring operations), and the pre-existing `MoveClipCommand` —
+mirroring the multi-command session loop `native_runtime.cpp` already
+implements (FT-017/TK-018), reusing `project.proto`'s message types by
+reference per ADR-010 rather than a new Desktop-owned envelope.
 """
 
 import asyncio
@@ -27,6 +28,8 @@ from corytm.engine.persistence import load_project, save_project
 from corytm.engine.project import Project
 from corytm.engine.track import AudioTrack
 from corytm.generated.project_pb2 import (
+    AudioClipAddedEvent,
+    AudioTrackAddedEvent,
     Command,
     Event,
     ProjectCreatedEvent,
@@ -34,11 +37,10 @@ from corytm.generated.project_pb2 import (
     ProjectSavedEvent,
 )
 
-from .session import materialize_project, move_clip_in_session
+from .session import add_clip_in_session, materialize_project, move_clip_in_session
 from .transport import read_frame, write_frame
 
 _AUTHENTICATION_TIMEOUT_SECONDS = 5
-_COMMAND_TIMEOUT_SECONDS = 30
 _SCHEMA_VERSION = 1
 
 
@@ -117,6 +119,48 @@ async def _dispatch_command(
             loaded_project,
         )
 
+    if which == "add_track":
+        track_id = str(uuid.uuid4())
+        new_project = current_project.with_track_added(track_id=track_id)
+        return (
+            Event(
+                track_added=AudioTrackAddedEvent(
+                    schema_version=_SCHEMA_VERSION,
+                    project_id=new_project.id,
+                    track_id=track_id,
+                    track_count=len(new_project.tracks),
+                )
+            ),
+            new_project,
+        )
+
+    if which == "add_clip":
+        add_clip_command = command.add_clip
+        clip_id = str(uuid.uuid4())
+        new_project, new_clip, rendered_event = await add_clip_in_session(
+            current_project,
+            track_id=add_clip_command.track_id,
+            clip_id=clip_id,
+            duration_seconds=add_clip_command.duration_seconds,
+            output_directory=output_directory,
+        )
+        return (
+            Event(
+                clip_added=AudioClipAddedEvent(
+                    schema_version=_SCHEMA_VERSION,
+                    project_id=new_project.id,
+                    track_id=add_clip_command.track_id,
+                    clip_id=clip_id,
+                    start_seconds=new_clip.start_seconds,
+                    duration_seconds=new_clip.duration_seconds,
+                    rendered_file_path=rendered_event.rendered_file_path,
+                    rendered_sample_count=rendered_event.rendered_sample_count,
+                    peak_amplitude=rendered_event.peak_amplitude,
+                )
+            ),
+            new_project,
+        )
+
     if which == "move_clip":
         move = command.move_clip
         new_project, clip_moved_event = await move_clip_in_session(
@@ -141,6 +185,12 @@ async def _run_session(
     connection that only ever sends `MoveClipCommand` behaves exactly
     as before this session loop existed.
 
+    The read below deliberately has no timeout: this channel is
+    genuinely persistent for the app's whole session (ADR-010), so an
+    arbitrarily long gap between human-triggered commands is normal,
+    not a failure — only the client actually closing the connection
+    (`IncompleteReadError`, on EOF) ends the session.
+
     Args:
         reader: The authenticated client connection to read commands
             from.
@@ -151,9 +201,7 @@ async def _run_session(
 
     while True:
         try:
-            command_bytes = await asyncio.wait_for(
-                read_frame(reader), timeout=_COMMAND_TIMEOUT_SECONDS
-            )
+            command_bytes = await read_frame(reader)
         except asyncio.IncompleteReadError:
             return
 

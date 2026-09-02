@@ -9,6 +9,8 @@ from corytm.engine.persistence import load_project, save_project
 from corytm.engine.project import Project
 from corytm.engine.track import AudioTrack
 from corytm.generated.project_pb2 import (
+    AddAudioClipCommand,
+    AddAudioTrackCommand,
     Command,
     CreateProjectCommand,
     Event,
@@ -299,6 +301,207 @@ def test_open_project_after_relaunch_with_no_tracks_succeeds(tmp_path: Path) -> 
 
     asyncio.run(asyncio.wait_for(_create_and_save(), timeout=20))
     asyncio.run(asyncio.wait_for(_relaunch_and_open(), timeout=20))
+
+
+@pytest.mark.transport
+def test_add_track_and_add_clip_author_real_content_and_render_it() -> None:
+    async def _scenario() -> None:
+        stdout = _CapturingStdout()
+        original_stdout = sys.stdout
+        original_stdin = sys.stdin
+        sys.stdout = stdout
+        sys.stdin = _FakeStdin()
+        try:
+            server_task = asyncio.create_task(serve_desktop_channel())
+
+            port, secret = await asyncio.wait_for(_read_handshake(stdout), timeout=5)
+
+            reader, writer = await asyncio.open_connection("127.0.0.1", port)
+            write_frame(writer, secret.encode("utf-8"))
+            await writer.drain()
+
+            created = await _exchange(
+                writer,
+                reader,
+                Command(create_project=CreateProjectCommand(schema_version=1)),
+            )
+            assert created.WhichOneof("event") == "project_created"
+
+            track_added = await _exchange(
+                writer,
+                reader,
+                Command(add_track=AddAudioTrackCommand(schema_version=1)),
+            )
+            assert track_added.WhichOneof("event") == "track_added"
+            assert track_added.track_added.track_count == 1
+            track_id = track_added.track_added.track_id
+
+            first_clip = await _exchange(
+                writer,
+                reader,
+                Command(
+                    add_clip=AddAudioClipCommand(
+                        schema_version=1, track_id=track_id, duration_seconds=2.0
+                    )
+                ),
+            )
+            assert first_clip.WhichOneof("event") == "clip_added"
+            assert first_clip.clip_added.start_seconds == 0.0
+            assert first_clip.clip_added.rendered_sample_count == pytest.approx(
+                2.0 * _SAMPLE_RATE, abs=1
+            )
+            assert first_clip.clip_added.peak_amplitude > 0.5
+
+            second_clip = await _exchange(
+                writer,
+                reader,
+                Command(
+                    add_clip=AddAudioClipCommand(
+                        schema_version=1, track_id=track_id, duration_seconds=1.0
+                    )
+                ),
+            )
+            assert second_clip.WhichOneof("event") == "clip_added"
+            assert second_clip.clip_added.start_seconds == 2.0
+            assert second_clip.clip_added.rendered_sample_count == pytest.approx(
+                3.0 * _SAMPLE_RATE, abs=1
+            )
+            assert second_clip.clip_added.peak_amplitude > 0.5
+
+            writer.close()
+            await writer.wait_closed()
+
+            await asyncio.wait_for(server_task, timeout=5)
+        finally:
+            sys.stdout = original_stdout
+            sys.stdin = original_stdin
+
+    asyncio.run(asyncio.wait_for(_scenario(), timeout=30))
+
+
+@pytest.mark.transport
+def test_repeated_commands_with_idle_gaps_stay_reliable_over_one_connection() -> None:
+    """Stress-tests the persistent session against lifecycle races.
+
+    Repeats a real command many times, each separated by a short idle
+    gap, over one held connection — the shape of a real interactive
+    session (pauses between clicks), not a tight loop. Catches a
+    resource leak or state-corruption race across many iterations that
+    a single-command test could not, and — combined with a real,
+    if modest, idle gap each time — guards against any reintroduced
+    per-command read timeout as directly as the dedicated idle-gap
+    test above, from a different angle (many small gaps, not one).
+    """
+
+    async def _scenario() -> None:
+        stdout = _CapturingStdout()
+        original_stdout = sys.stdout
+        original_stdin = sys.stdin
+        sys.stdout = stdout
+        sys.stdin = _FakeStdin()
+        try:
+            server_task = asyncio.create_task(serve_desktop_channel())
+
+            port, secret = await asyncio.wait_for(_read_handshake(stdout), timeout=5)
+
+            reader, writer = await asyncio.open_connection("127.0.0.1", port)
+            write_frame(writer, secret.encode("utf-8"))
+            await writer.drain()
+
+            for iteration in range(10):
+                await asyncio.sleep(0.1)
+                moved = await _exchange(
+                    writer,
+                    reader,
+                    Command(
+                        move_clip=MoveClipCommand(
+                            schema_version=1,
+                            project_id="desktop-fixture",
+                            track_id="track-1",
+                            clip_id="clip-1",
+                            new_start_seconds=float(iteration),
+                        )
+                    ),
+                )
+                assert moved.WhichOneof("event") == "clip_moved"
+                assert moved.clip_moved.moved is True
+                assert moved.clip_moved.start_seconds == float(iteration)
+                assert moved.clip_moved.rendered_sample_count > 0
+                assert moved.clip_moved.peak_amplitude > 0.0
+
+            writer.close()
+            await writer.wait_closed()
+
+            await asyncio.wait_for(server_task, timeout=5)
+        finally:
+            sys.stdout = original_stdout
+            sys.stdin = original_stdin
+
+    asyncio.run(asyncio.wait_for(_scenario(), timeout=60))
+
+
+def test_session_survives_a_long_idle_gap_between_commands(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reproduces the real "leave the app open for a while" bug.
+
+    `_run_session`'s command-read used to wrap `read_frame` in
+    `asyncio.wait_for(..., timeout=_COMMAND_TIMEOUT_SECONDS)`, whose
+    `TimeoutError` was never caught (only `IncompleteReadError` was) —
+    it propagated uncaught through `serve_desktop_channel()`/`main()`,
+    silently killing the whole `corytm serve` process on any real idle
+    gap longer than that timeout, while the Rust side kept believing
+    its connection was still live. The Desktop channel is designed to
+    be genuinely persistent for the app's whole session (ADR-010), so
+    an idle gap of any length must never end the session on its own —
+    only the client actually disconnecting should.
+
+    `raising=False` lets this same monkeypatch line keep exercising a
+    real, fast reproduction of the exact bug before the fix (shrinking
+    the real timeout from 30s to a fraction of a second) without
+    erroring once the fix removes `_COMMAND_TIMEOUT_SECONDS` entirely
+    — at that point the patch simply targets nothing.
+    """
+    monkeypatch.setattr(
+        "corytm.runtime.desktop._COMMAND_TIMEOUT_SECONDS", 0.2, raising=False
+    )
+
+    async def _scenario() -> None:
+        stdout = _CapturingStdout()
+        original_stdout = sys.stdout
+        original_stdin = sys.stdin
+        sys.stdout = stdout
+        sys.stdin = _FakeStdin()
+        try:
+            server_task = asyncio.create_task(serve_desktop_channel())
+
+            port, secret = await asyncio.wait_for(_read_handshake(stdout), timeout=5)
+
+            reader, writer = await asyncio.open_connection("127.0.0.1", port)
+            write_frame(writer, secret.encode("utf-8"))
+            await writer.drain()
+
+            await asyncio.sleep(0.5)
+            assert not server_task.done(), (
+                "the session must not exit merely from an idle gap"
+            )
+
+            created = await _exchange(
+                writer,
+                reader,
+                Command(create_project=CreateProjectCommand(schema_version=1)),
+            )
+            assert created.WhichOneof("event") == "project_created"
+
+            writer.close()
+            await writer.wait_closed()
+
+            await asyncio.wait_for(server_task, timeout=5)
+        finally:
+            sys.stdout = original_stdout
+            sys.stdin = original_stdin
+
+    asyncio.run(asyncio.wait_for(_scenario(), timeout=15))
 
 
 @pytest.mark.transport

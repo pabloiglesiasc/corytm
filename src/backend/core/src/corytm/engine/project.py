@@ -66,3 +66,63 @@ class Project(BaseModel):
             raise ValueError(f"no track with id {track_id!r} in project {self.id!r}")
 
         return self.model_copy(update={"tracks": tuple(updated_tracks)})
+
+    def with_track_added(self, *, track_id: str) -> Project:
+        """Return a new project with an empty track appended.
+
+        Args:
+            track_id: Id for the new track. Uniqueness is not
+                validated here — the caller controls id generation.
+
+        Returns:
+            A new `Project` with the appended, clip-less track;
+            existing tracks are unchanged.
+        """
+        return self.model_copy(
+            update={"tracks": (*self.tracks, AudioTrack(id=track_id))}
+        )
+
+    def with_clip_appended(
+        self, *, track_id: str, clip_id: str, duration_seconds: float
+    ) -> Project:
+        """Return a new project with a clip appended to one of its tracks.
+
+        Delegates the actual append to the targeted `AudioTrack`, which
+        computes the new clip's start position after its existing
+        clips.
+
+        Args:
+            track_id: Id of the track to append the clip to, within
+                this project.
+            clip_id: Id for the new clip. Uniqueness is not validated
+                here — the caller controls id generation.
+            duration_seconds: Length of the new clip, in seconds.
+
+        Returns:
+            A new `Project` with the targeted track's clip appended;
+            all other tracks are unchanged.
+
+        Raises:
+            ValueError: No track with `track_id` exists on this
+                project.
+            pydantic.ValidationError: `duration_seconds` is invalid.
+        """
+        updated_tracks: list[AudioTrack] = []
+        found = False
+
+        for track in self.tracks:
+            if track.id != track_id:
+                updated_tracks.append(track)
+                continue
+
+            updated_tracks.append(
+                track.with_clip_appended(
+                    clip_id=clip_id, duration_seconds=duration_seconds
+                )
+            )
+            found = True
+
+        if not found:
+            raise ValueError(f"no track with id {track_id!r} in project {self.id!r}")
+
+        return self.model_copy(update={"tracks": tuple(updated_tracks)})

@@ -12,6 +12,9 @@ fn main() {
         "create_project",
         "save_project",
         "open_project",
+        "add_track",
+        "add_clip",
+        "desktop_channel_ready",
       ])),
   )
   .expect("failed to run tauri-build");

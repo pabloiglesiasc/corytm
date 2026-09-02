@@ -55,3 +55,35 @@ def test_with_clip_moved_rejects_a_negative_start() -> None:
 
     with pytest.raises(ValidationError):
         track.with_clip_moved(clip_id="clip-1", new_start_seconds=-1.0)
+
+
+def test_with_clip_appended_places_the_first_clip_at_the_start() -> None:
+    track = AudioTrack(id="track-1")
+
+    appended = track.with_clip_appended(clip_id="clip-1", duration_seconds=2.0)
+
+    assert appended is not track
+    assert track.clips == ()
+    assert appended.clips == (
+        AudioClip(id="clip-1", start_seconds=0.0, duration_seconds=2.0),
+    )
+
+
+def test_with_clip_appended_places_a_later_clip_after_existing_ones() -> None:
+    first = AudioClip(id="clip-1", start_seconds=0.0, duration_seconds=2.0)
+    track = AudioTrack(id="track-1", clips=(first,))
+
+    appended = track.with_clip_appended(clip_id="clip-2", duration_seconds=1.5)
+
+    assert appended.clips == (
+        first,
+        AudioClip(id="clip-2", start_seconds=2.0, duration_seconds=1.5),
+    )
+    assert track.clips == (first,)
+
+
+def test_with_clip_appended_rejects_a_non_positive_duration() -> None:
+    track = AudioTrack(id="track-1")
+
+    with pytest.raises(ValidationError):
+        track.with_clip_appended(clip_id="clip-1", duration_seconds=0.0)

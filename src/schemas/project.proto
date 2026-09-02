@@ -88,6 +88,35 @@ message ProjectOpenedEvent {
   double peak_amplitude = 6;
 }
 
+message AddAudioTrackCommand {
+  uint32 schema_version = 1;
+}
+
+message AudioTrackAddedEvent {
+  uint32 schema_version = 1;
+  string project_id = 2;
+  string track_id = 3;
+  uint32 track_count = 4;
+}
+
+message AddAudioClipCommand {
+  uint32 schema_version = 1;
+  string track_id = 2;
+  double duration_seconds = 3;
+}
+
+message AudioClipAddedEvent {
+  uint32 schema_version = 1;
+  string project_id = 2;
+  string track_id = 3;
+  string clip_id = 4;
+  double start_seconds = 5;
+  double duration_seconds = 6;
+  string rendered_file_path = 7;
+  uint64 rendered_sample_count = 8;
+  double peak_amplitude = 9;
+}
+
 message Command {
   oneof command {
     MaterializeProjectCommand materialize = 1;
@@ -95,6 +124,8 @@ message Command {
     CreateProjectCommand create_project = 3;
     SaveProjectCommand save_project = 4;
     OpenProjectCommand open_project = 5;
+    AddAudioTrackCommand add_track = 6;
+    AddAudioClipCommand add_clip = 7;
   }
 }
 
@@ -105,5 +136,7 @@ message Event {
     ProjectCreatedEvent project_created = 3;
     ProjectSavedEvent project_saved = 4;
     ProjectOpenedEvent project_opened = 5;
+    AudioTrackAddedEvent track_added = 6;
+    AudioClipAddedEvent clip_added = 7;
   }
 }

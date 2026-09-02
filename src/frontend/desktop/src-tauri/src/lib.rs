@@ -1,7 +1,9 @@
+#[cfg(not(test))]
 use std::sync::Mutex;
 
 use prost::Message;
 use tauri::async_runtime::Receiver;
+#[cfg(not(test))]
 use tauri::{Manager, RunEvent};
 use tauri_plugin_shell::{
   process::{CommandChild, CommandEvent},
@@ -86,16 +88,41 @@ async fn send_command(
     .as_mut()
     .ok_or_else(|| "desktop channel is not connected yet".to_string())?;
 
-  write_frame(stream, &command.encode_to_vec())
-    .await
-    .map_err(|error| format!("failed to send command: {error}"))?;
+  if let Err(error) = write_frame(stream, &command.encode_to_vec()).await {
+    // The connection is dead (e.g. the peer process exited) — clear
+    // it rather than leaving a stale stream in place, so
+    // `desktop_channel_ready` immediately reflects reality and the
+    // frontend disables every control again instead of continuing to
+    // offer actions that are now guaranteed to fail. This channel is
+    // genuinely persistent for the app's session (ADR-010), not
+    // reconnecting — once cleared, it stays `None` until relaunch.
+    *guard = None;
+    return Err(format!("failed to send command: {error}"));
+  }
 
-  let event_bytes = read_frame(stream)
-    .await
-    .map_err(|error| format!("failed to read event: {error}"))?;
+  let event_bytes = match read_frame(stream).await {
+    Ok(bytes) => bytes,
+    Err(error) => {
+      *guard = None;
+      return Err(format!("failed to read event: {error}"));
+    }
+  };
 
   project_proto::Event::decode(event_bytes.as_slice())
     .map_err(|error| format!("failed to decode event: {error}"))
+}
+
+/// Report whether the Desktop channel's persistent connection is
+/// genuinely established yet.
+///
+/// The frontend must call this (and disable Desktop-channel-dependent
+/// controls until it reports `true`) rather than assume the channel
+/// is ready as soon as the window is interactive: `run()`'s `.setup()`
+/// spawns the sidecar and connects asynchronously, so a user could
+/// otherwise click a control before that work completes.
+#[tauri::command]
+async fn desktop_channel_ready(state: tauri::State<'_, DesktopConnection>) -> Result<bool, ()> {
+  Ok(state.lock().await.is_some())
 }
 
 /// A `ClipMovedEvent`'s fields, reshaped for JSON serialization back
@@ -241,6 +268,79 @@ async fn open_project(
   })
 }
 
+/// An `AudioTrackAddedEvent`'s fields, reshaped for JSON serialization
+/// back to the frontend.
+#[derive(serde::Serialize)]
+struct AudioTrackAddedResult {
+  track_id: String,
+  track_count: u32,
+}
+
+/// Add an empty track to the session's current project.
+#[tauri::command]
+async fn add_track(
+  state: tauri::State<'_, DesktopConnection>,
+) -> Result<AudioTrackAddedResult, String> {
+  let command = project_proto::Command {
+    command: Some(project_proto::command::Command::AddTrack(
+      project_proto::AddAudioTrackCommand { schema_version: 1 },
+    )),
+  };
+  let event = send_command(&state, command).await?;
+  let Some(project_proto::event::Event::TrackAdded(event)) = event.event else {
+    return Err("expected a track-added event".to_string());
+  };
+
+  Ok(AudioTrackAddedResult {
+    track_id: event.track_id,
+    track_count: event.track_count,
+  })
+}
+
+/// An `AudioClipAddedEvent`'s fields, reshaped for JSON serialization
+/// back to the frontend.
+#[derive(serde::Serialize)]
+struct AudioClipAddedResult {
+  clip_id: String,
+  start_seconds: f64,
+  duration_seconds: f64,
+  rendered_file_path: String,
+  rendered_sample_count: u64,
+  peak_amplitude: f64,
+}
+
+/// Append a new clip of `duration_seconds` to `track_id`, and
+/// re-render the resulting project.
+#[tauri::command]
+async fn add_clip(
+  state: tauri::State<'_, DesktopConnection>,
+  track_id: String,
+  duration_seconds: f64,
+) -> Result<AudioClipAddedResult, String> {
+  let command = project_proto::Command {
+    command: Some(project_proto::command::Command::AddClip(
+      project_proto::AddAudioClipCommand {
+        schema_version: 1,
+        track_id,
+        duration_seconds,
+      },
+    )),
+  };
+  let event = send_command(&state, command).await?;
+  let Some(project_proto::event::Event::ClipAdded(event)) = event.event else {
+    return Err("expected a clip-added event".to_string());
+  };
+
+  Ok(AudioClipAddedResult {
+    clip_id: event.clip_id,
+    start_seconds: event.start_seconds,
+    duration_seconds: event.duration_seconds,
+    rendered_file_path: event.rendered_file_path,
+    rendered_sample_count: event.rendered_sample_count,
+    peak_amplitude: event.peak_amplitude,
+  })
+}
+
 async fn spawn_desktop_sidecar<R: tauri::Runtime>(
   app: &tauri::AppHandle<R>,
 ) -> Result<(Receiver<CommandEvent>, CommandChild, u16, String), String> {
@@ -292,7 +392,21 @@ async fn spawn_desktop_sidecar<R: tauri::Runtime>(
   ))
 }
 
+// `tauri::generate_context!()` embeds a process-wide `_EMBED_INFO_PLIST`
+// symbol that can only be defined once per compiled binary — this
+// crate's own tests need a second, independent expansion (against the
+// same real `tauri.conf.json`/`capabilities/`) to exercise the real
+// ACL/capability pipeline, which `mock_context`'s empty ACL cannot.
+// `run()` itself is never called from a test (only `main.rs` calls
+// it), so its real body is compiled out under `cfg(test)` instead of
+// colliding with that second expansion.
+#[cfg(test)]
+pub fn run() {
+  unreachable!("run() must not be called from unit tests — see the cfg(not(test)) copy below")
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
+#[cfg(not(test))]
 pub fn run() {
   tauri::Builder::default()
     .plugin(tauri_plugin_shell::init())
@@ -301,7 +415,10 @@ pub fn run() {
       move_clip,
       create_project,
       save_project,
-      open_project
+      open_project,
+      add_track,
+      add_clip,
+      desktop_channel_ready
     ])
     .setup(|app| {
       if cfg!(debug_assertions) {
@@ -449,9 +566,15 @@ mod desktop_channel_tests {
   use tauri::Manager;
   use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 
+  use serde_json::json;
+  use tauri::ipc::CallbackFn;
+  use tauri::test::get_ipc_response;
+  use tauri::webview::InvokeRequest;
+  use tauri::WebviewWindowBuilder;
+
   use crate::{
-    connect_desktop_channel, create_project, move_clip, open_project, save_project,
-    spawn_desktop_sidecar, DesktopConnection,
+    add_clip, add_track, connect_desktop_channel, create_project, desktop_channel_ready,
+    move_clip, open_project, save_project, spawn_desktop_sidecar, DesktopConnection,
   };
 
   /// Kills the wrapped sidecar on drop unless [`Self::disarm`] already
@@ -686,5 +809,316 @@ mod desktop_channel_tests {
     }
 
     sidecar.disarm();
+  }
+
+  #[tokio::test]
+  async fn create_add_track_add_clip_all_succeed_over_one_held_connection() {
+    let app = mock_builder()
+      .plugin(tauri_plugin_shell::init())
+      .build(mock_context(noop_assets()))
+      .expect("failed to build mock app");
+
+    app.manage(DesktopConnection::new(None));
+
+    let (mut receiver, child, port, secret) = tokio::time::timeout(
+      Duration::from_secs(10),
+      spawn_desktop_sidecar(app.handle()),
+    )
+    .await
+    .expect("timed out waiting for the desktop channel handshake")
+    .expect("failed to spawn corytm serve and complete its handshake");
+    let mut sidecar = SidecarGuard(Some(child));
+
+    let stream = connect_desktop_channel(port, &secret)
+      .await
+      .expect("failed to connect to the desktop channel");
+    *app.state::<DesktopConnection>().lock().await = Some(stream);
+
+    let created = tokio::time::timeout(Duration::from_secs(30), create_project(app.state()))
+      .await
+      .expect("timed out waiting for create_project")
+      .expect("create_project failed");
+    assert!(!created.project_id.is_empty(), "expected a real project id");
+
+    let track_added = tokio::time::timeout(Duration::from_secs(30), add_track(app.state()))
+      .await
+      .expect("timed out waiting for add_track")
+      .expect("add_track failed");
+    assert_eq!(track_added.track_count, 1);
+    assert!(!track_added.track_id.is_empty(), "expected a real track id");
+
+    let first_clip = tokio::time::timeout(
+      Duration::from_secs(60),
+      add_clip(app.state(), track_added.track_id.clone(), 2.0),
+    )
+    .await
+    .expect("timed out waiting for add_clip")
+    .expect("add_clip failed");
+    assert_eq!(first_clip.start_seconds, 0.0);
+    assert!(
+      first_clip.rendered_sample_count > 0,
+      "expected a real render sample count"
+    );
+    assert!(
+      first_clip.peak_amplitude > 0.0,
+      "expected a real non-silent render"
+    );
+
+    let second_clip = tokio::time::timeout(
+      Duration::from_secs(60),
+      add_clip(app.state(), track_added.track_id, 1.0),
+    )
+    .await
+    .expect("timed out waiting for the second add_clip")
+    .expect("second add_clip failed");
+    assert_eq!(
+      second_clip.start_seconds,
+      first_clip.start_seconds + first_clip.duration_seconds,
+      "expected the second clip appended right after the first"
+    );
+
+    app.state::<DesktopConnection>().lock().await.take();
+
+    sidecar
+      .write(b"SHUTDOWN\n")
+      .expect("failed to write SHUTDOWN");
+
+    loop {
+      let event = tokio::time::timeout(Duration::from_secs(10), receiver.recv())
+        .await
+        .expect("timed out waiting for the sidecar to terminate")
+        .expect("sidecar event channel closed before terminating");
+
+      if let CommandEvent::Terminated(payload) = event {
+        assert_eq!(payload.code, Some(0));
+        break;
+      }
+    }
+
+    sidecar.disarm();
+  }
+
+  /// A minimal, real IPC invoke request for `cmd`, matching the shape
+  /// the frontend's own `invoke()` sends over the actual `postMessage`
+  /// pipeline this test drives through — not a direct Rust function
+  /// call, which bypasses ACL/capability resolution entirely (the
+  /// gap that let `add_track`/`add_clip` ship without one).
+  fn invoke_request(cmd: &str, args: serde_json::Value) -> InvokeRequest {
+    InvokeRequest {
+      cmd: cmd.into(),
+      callback: CallbackFn(0),
+      error: CallbackFn(1),
+      url: "tauri://localhost".parse().unwrap(),
+      body: tauri::ipc::InvokeBody::Json(args),
+      headers: Default::default(),
+      invoke_key: tauri::test::INVOKE_KEY.to_string(),
+    }
+  }
+
+  /// Every real app command must be reachable through the actual IPC
+  /// invoke pipeline this app ships — not merely callable as a plain
+  /// Rust function (every other test in this module does that, which
+  /// never exercises ACL/capability resolution at all), and the
+  /// `desktop_channel_ready` readiness query must genuinely reflect
+  /// connection state before and after the real handshake. Both are
+  /// proven in one test: `tauri::generate_context!()` (needed for the
+  /// app's own real, compiled-in `tauri.conf.json`/`capabilities/`,
+  /// not `mock_context`'s empty, unresolved ACL) can only expand once
+  /// per compiled test binary — a second expansion anywhere else in
+  /// this module fails to link (`_EMBED_INFO_PLIST` already defined).
+  // `get_ipc_response` blocks its calling thread on a synchronous
+  // channel receive while the invoked async command runs — on a
+  // single-threaded runtime that would starve the very task it's
+  // waiting on, deadlocking. `flavor = "multi_thread"` gives the
+  // command a separate worker thread to actually run on.
+  #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+  async fn real_app_commands_are_permitted_and_readiness_is_observable() {
+    let app = mock_builder()
+      .plugin(tauri_plugin_shell::init())
+      .plugin(tauri_plugin_dialog::init())
+      .invoke_handler(tauri::generate_handler![
+        move_clip,
+        create_project,
+        save_project,
+        open_project,
+        add_track,
+        add_clip,
+        desktop_channel_ready
+      ])
+      .build(tauri::generate_context!())
+      .expect("failed to build the app with its real generated context");
+
+    app.manage(DesktopConnection::new(None));
+
+    let webview = WebviewWindowBuilder::new(&app, "main", Default::default())
+      .build()
+      .expect("failed to build a mock webview window");
+
+    // Before any spawn/connect happens at all — exactly a user
+    // clicking the instant the window appears. The readiness query
+    // must report `false`, and a Desktop-channel command must fail
+    // cleanly (a clear, specific error) rather than hang or produce a
+    // confusing low-level failure.
+    let ready_before = get_ipc_response(&webview, invoke_request("desktop_channel_ready", json!({})))
+      .expect("desktop_channel_ready should always be permitted")
+      .deserialize::<bool>()
+      .expect("failed to decode desktop_channel_ready's response");
+    assert!(!ready_before, "expected not ready before the channel connects");
+
+    let premature_response =
+      get_ipc_response(&webview, invoke_request("create_project", json!({})));
+    let Err(premature_error) = premature_response else {
+      panic!("expected create_project to fail before the channel is connected");
+    };
+    let premature_message = premature_error.as_str().unwrap_or_default();
+    assert!(
+      premature_message.contains("not connected yet"),
+      "expected a clear not-connected error, got {premature_message:?}"
+    );
+
+    let (mut receiver, child, port, secret) = tokio::time::timeout(
+      Duration::from_secs(10),
+      spawn_desktop_sidecar(app.handle()),
+    )
+    .await
+    .expect("timed out waiting for the desktop channel handshake")
+    .expect("failed to spawn corytm serve and complete its handshake");
+    let mut sidecar = SidecarGuard(Some(child));
+
+    let stream = connect_desktop_channel(port, &secret)
+      .await
+      .expect("failed to connect to the desktop channel");
+    *app.state::<DesktopConnection>().lock().await = Some(stream);
+
+    let ready_after = get_ipc_response(&webview, invoke_request("desktop_channel_ready", json!({})))
+      .expect("desktop_channel_ready should always be permitted")
+      .deserialize::<bool>()
+      .expect("failed to decode desktop_channel_ready's response");
+    assert!(ready_after, "expected ready once the channel is connected");
+
+    // `move_clip` first, against the still-intact fixture project — a
+    // known-already-working control proving this test's own method
+    // (a real IPC invoke, not a direct Rust call) correctly reports
+    // "permitted" and isn't itself silently vacuous.
+    let move_response = get_ipc_response(&webview, invoke_request("move_clip", json!({})));
+    assert!(
+      move_response.is_ok(),
+      "expected move_clip to be permitted by capabilities/default.json, got {move_response:?}"
+    );
+
+    // `create_project` resets the session before `add_track`/`add_clip`
+    // — the two commands this test exists to catch a regression on.
+    let create_response =
+      get_ipc_response(&webview, invoke_request("create_project", json!({})));
+    assert!(
+      create_response.is_ok(),
+      "expected create_project to be permitted, got {create_response:?}"
+    );
+
+    let track_response = get_ipc_response(&webview, invoke_request("add_track", json!({})));
+    assert!(
+      track_response.is_ok(),
+      "expected add_track to be permitted by capabilities/default.json, got {track_response:?}"
+    );
+    let track_id = track_response
+      .expect("checked above")
+      .deserialize::<serde_json::Value>()
+      .expect("failed to decode add_track's response")["track_id"]
+      .as_str()
+      .expect("expected a string track_id")
+      .to_string();
+
+    let clip_response = get_ipc_response(
+      &webview,
+      invoke_request(
+        "add_clip",
+        json!({ "trackId": track_id, "durationSeconds": 1.0 }),
+      ),
+    );
+    assert!(
+      clip_response.is_ok(),
+      "expected add_clip to be permitted by capabilities/default.json, got {clip_response:?}"
+    );
+
+    app.state::<DesktopConnection>().lock().await.take();
+
+    sidecar
+      .write(b"SHUTDOWN\n")
+      .expect("failed to write SHUTDOWN");
+
+    loop {
+      let event = tokio::time::timeout(Duration::from_secs(10), receiver.recv())
+        .await
+        .expect("timed out waiting for the sidecar to terminate")
+        .expect("sidecar event channel closed before terminating");
+
+      if let CommandEvent::Terminated(payload) = event {
+        assert_eq!(payload.code, Some(0));
+        break;
+      }
+    }
+
+    sidecar.disarm();
+  }
+
+  /// Reproduces the "leave the app open, then Broken pipe" bug's
+  /// Rust-side half: once the peer is gone, `send_command` must not
+  /// leave a stale stream behind for `desktop_channel_ready` to keep
+  /// reporting `true` against — a user must never see live-looking
+  /// controls that are now guaranteed to fail. This channel is
+  /// genuinely persistent (ADR-010), so the fix is not to reconnect —
+  /// only to make the app's own readiness state honest once dead.
+  ///
+  /// A throwaway TCP listener stands in for the real sidecar: this is
+  /// purely about `send_command`'s own error handling, not about
+  /// `corytm serve`'s process lifecycle, and a real peer process is
+  /// both slower and, on this platform, not reliably killable by PID
+  /// at all — `CommandChild::kill()` only terminates the `uv` process
+  /// it directly spawned, not `corytm serve` running as *its* child
+  /// (confirmed directly: both remained alive, independently, after
+  /// `kill()` during this test's own development).
+  #[tokio::test]
+  async fn a_dead_connection_is_cleared_so_readiness_reflects_it() {
+    let app = mock_builder()
+      .plugin(tauri_plugin_shell::init())
+      .build(mock_context(noop_assets()))
+      .expect("failed to build mock app");
+
+    app.manage(DesktopConnection::new(None));
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+      .await
+      .expect("failed to bind a throwaway listener");
+    let addr = listener.local_addr().expect("failed to read listener addr");
+
+    let client = tokio::net::TcpStream::connect(addr)
+      .await
+      .expect("failed to connect to the throwaway listener");
+    let (peer, _) = listener
+      .accept()
+      .await
+      .expect("failed to accept the throwaway connection");
+
+    *app.state::<DesktopConnection>().lock().await = Some(client);
+
+    assert!(
+      desktop_channel_ready(app.state()).await.expect("checked"),
+      "expected the channel to report ready once connected"
+    );
+
+    // Simulate the peer disappearing mid-session: close its end.
+    drop(peer);
+    drop(listener);
+
+    let result = create_project(app.state()).await;
+    assert!(
+      result.is_err(),
+      "expected create_project to fail against a dead connection"
+    );
+
+    assert!(
+      !desktop_channel_ready(app.state()).await.expect("checked"),
+      "expected the connection to be cleared after the failed command"
+    );
   }
 }

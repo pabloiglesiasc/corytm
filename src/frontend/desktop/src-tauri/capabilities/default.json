@@ -11,6 +11,9 @@
     "allow-move-clip",
     "allow-create-project",
     "allow-save-project",
-    "allow-open-project"
+    "allow-open-project",
+    "allow-add-track",
+    "allow-add-clip",
+    "allow-desktop-channel-ready"
   ]
 }

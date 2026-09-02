@@ -14,6 +14,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import NamedTuple
 
+from corytm.engine.clip import AudioClip
 from corytm.engine.project import Project
 from corytm.generated.project_pb2 import (
     ClipMovedEvent,
@@ -252,6 +253,54 @@ async def move_clip_in_session(
     )
 
     return new_project, clip_moved_events[0]
+
+
+async def add_clip_in_session(
+    project: Project,
+    *,
+    track_id: str,
+    clip_id: str,
+    duration_seconds: float,
+    output_directory: Path,
+) -> tuple[Project, AudioClip, ProjectRenderedEvent]:
+    """Append a new clip to a track and re-render the resulting project.
+
+    Combines Corytm Engine's own `with_clip_appended` canonical-state
+    update with a full re-materialize of the resulting project — a new
+    clip has no live-session incremental counterpart the way moving an
+    existing one does (`move_clip_in_session`), so the whole project is
+    simply re-sent, exactly as `open_project` already does.
+
+    Args:
+        project: The canonical project to edit.
+        track_id: Id of the track to append the clip to.
+        clip_id: Id for the new clip. Uniqueness is not validated here
+            — the caller controls id generation.
+        duration_seconds: Length of the new clip, in seconds.
+        output_directory: Directory the native process should write
+            its rendered output into.
+
+    Returns:
+        The new canonical `Project` with the clip appended, that same
+        clip (to read back its computed start position), and the
+        `ProjectRenderedEvent` describing the re-rendered sound.
+
+    Raises:
+        ValueError: `track_id` doesn't exist on `project` — raised by
+            Engine's own `with_clip_appended` before any native
+            process is spawned.
+        FileNotFoundError, RuntimeError, TimeoutError: propagated
+            unchanged from `materialize_project`.
+    """
+    new_project = project.with_clip_appended(
+        track_id=track_id, clip_id=clip_id, duration_seconds=duration_seconds
+    )
+    new_track = next(track for track in new_project.tracks if track.id == track_id)
+    new_clip = new_track.clips[-1]
+
+    rendered_event = await materialize_project(new_project, output_directory)
+
+    return new_project, new_clip, rendered_event
 
 
 async def materialize_then_move_clips(

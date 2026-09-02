@@ -33,6 +33,8 @@ jobs:
       SCCACHE_GHA_ENABLED: "true"
       RUSTC_WRAPPER: sccache
       CMAKE_BUILD_PARALLEL_LEVEL: ${{ matrix.os == 'macos-latest' && '3' || '4' }}
+      SCCACHE_ERROR_LOG: ${{ github.workspace }}/sccache-log.txt
+      SCCACHE_LOG: sccache=debug
     steps:
       - uses: actions/checkout@v7.0.1
 
@@ -56,6 +58,10 @@ jobs:
 
       - uses: mozilla-actions/sccache-action@v0.0.11
 
+      - name: Start sccache server
+        shell: bash
+        run: sccache --start-server
+
       - uses: actions/cache@v6.1.0
         with:
           path: |
@@ -77,4 +83,9 @@ jobs:
       - run: make check
         shell: bash
         env:
-          CMAKE_CONFIGURE_FLAGS: ${{ runner.os == 'Windows' && '-DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache -DCMAKE_MSVC_DEBUG_INFORMATION_FORMAT=Embedded -DCMAKE_POLICY_CMP0141=NEW' || '-DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache' }}
+          CMAKE_CONFIGURE_FLAGS: ${{ runner.os == 'Windows' && '' || '-DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache' }}
+
+      - name: Show sccache diagnostic log
+        if: always()
+        shell: bash
+        run: cat "$SCCACHE_ERROR_LOG" 2>/dev/null || echo "no sccache error log was produced"

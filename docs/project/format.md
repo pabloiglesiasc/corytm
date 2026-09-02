@@ -75,7 +75,7 @@ Stable, verifiable statements of expected outcome — not execution checkboxes, 
 
 ## Sizing
 
-No story points. Optional Complexity/Risk (low/medium/high) only when it materially aids triage. The test: can one fresh session DISCOVER, PLAN, IMPLEMENT, REVIEW, VALIDATE, SYNC, and CLOSE this safely? If not, split it.
+No story points. Optional Complexity/Risk (low/medium/high) only when it materially aids triage. The test: can one fresh session DISCOVER, PLAN, IMPLEMENT, REVIEW, VALIDATE, SYNC, and CLOSE this safely? If not, split it. Within that ceiling, prefer the smallest coherent vertical increment that proves one meaningful capability end-to-end — not a micro-Task too small to demonstrate any real capability on its own, and not a Task or Feature bundling multiple capabilities that could succeed or fail independently of each other.
 
 ## One Active Task
 

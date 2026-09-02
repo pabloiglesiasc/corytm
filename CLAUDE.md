@@ -76,7 +76,7 @@ Work decomposes as Milestone (a transversal outcome) and Epic → Feature → Ta
 
 One implementation Task runs at a time. One session executes exactly one Task — it may cross the responsibility handoffs that Task requires, but must not automatically continue to the next independent Task after closing. After closing, Claude may recommend or select the next Task and then stop.
 
-Three interaction modes: **directed** ("implement TK-031" → execute exactly that Task); **autonomous** ("continue development" → weigh approved strategy, PMO/technical state, and CPO/CTO alignment proportionally to the decision's size; select the next ready Task; if proceeding would require a Protected Product Decision (§5), propose it with rationale and stop for approval instead; otherwise briefly explain the choice, execute it, close it, recommend the next, stop); **consultative** ("what should we work on next?" → recommend without implementing).
+Three interaction modes: **directed** ("implement TK-031" → execute exactly that Task); **autonomous** ("continue development" → first, quickly verify from real available evidence that the most recently documented Task/Feature/Epic state is actually complete and consistent, synchronizing any stale PMO/status/risk record before relying on it; then weigh approved strategy, PMO/technical state, and CPO/CTO alignment proportionally to the decision's size; select the next ready Task; if proceeding would require a Protected Product Decision (§5), propose it with rationale and stop for approval instead; otherwise briefly explain the choice, execute it, close it, recommend the next, stop); **consultative** ("what should we work on next?" → recommend without implementing).
 
 ## 7. Task Execution Protocol
 

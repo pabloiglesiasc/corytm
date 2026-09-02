@@ -179,6 +179,61 @@ async def materialize_project(
     return event.project_rendered
 
 
+async def move_clip_in_session(
+    project: Project,
+    *,
+    track_id: str,
+    clip_id: str,
+    new_start_seconds: float,
+    output_directory: Path,
+) -> tuple[Project, ClipMovedEvent]:
+    """Apply one clip move to `project`'s canonical state and live session.
+
+    Combines Corytm Engine's own `with_clip_moved` canonical-state
+    update with a materialize-then-move round trip against the Native
+    Audio Runtime, so both halves of an edit happen together. This is
+    the one shared execution path behind both `corytm.dorian.tools`'
+    `move_clip` (ADR-004) and the Desktop channel's move-clip command
+    (ADR-010) — `corytm.runtime` never depends on `corytm.dorian`, so
+    this lives here rather than being called through Dorian's module.
+
+    Args:
+        project: The canonical project to edit.
+        track_id: Id of the track owning the clip to move.
+        clip_id: Id of the clip to move, within that track.
+        new_start_seconds: The clip's new start position, in seconds.
+        output_directory: Directory the native process should write
+            its rendered output into.
+
+    Returns:
+        The new canonical `Project` with the clip moved, and the
+        `ClipMovedEvent` describing the edit's effect on the
+        re-rendered sound.
+
+    Raises:
+        ValueError: `track_id`/`clip_id` don't exist on `project` —
+            raised by Engine's own `with_clip_moved` before any native
+            process is spawned.
+        FileNotFoundError, RuntimeError, TimeoutError: propagated
+            unchanged from `materialize_then_move_clips`.
+    """
+    new_project = project.with_clip_moved(
+        track_id=track_id, clip_id=clip_id, new_start_seconds=new_start_seconds
+    )
+
+    _, clip_moved_events = await materialize_then_move_clips(
+        project,
+        [
+            ClipMove(
+                track_id=track_id, clip_id=clip_id, new_start_seconds=new_start_seconds
+            )
+        ],
+        output_directory,
+    )
+
+    return new_project, clip_moved_events[0]
+
+
 async def materialize_then_move_clips(
     project: Project, moves: Sequence[ClipMove], output_directory: Path
 ) -> tuple[ProjectRenderedEvent, list[ClipMovedEvent]]:

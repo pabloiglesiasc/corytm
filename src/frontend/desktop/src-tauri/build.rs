@@ -6,14 +6,15 @@ use sha2::{Digest, Sha256};
 fn main() {
   tauri_build::try_build(
     tauri_build::Attributes::new()
-      .windows_attributes(tauri_build::WindowsAttributes::new_without_app_manifest()),
+      .windows_attributes(tauri_build::WindowsAttributes::new_without_app_manifest())
+      .app_manifest(tauri_build::AppManifest::new().commands(&["move_clip"])),
   )
   .expect("failed to run tauri-build");
 
   #[cfg(windows)]
   embed_manifest_if_msvc();
 
-  compile_desktop_proto();
+  compile_protos();
 }
 
 struct ProtocRelease {
@@ -93,16 +94,18 @@ fn fetch_protoc() -> PathBuf {
   protoc_path
 }
 
-fn compile_desktop_proto() {
+fn compile_protos() {
   let schema_dir = PathBuf::from("../../../schemas");
-  let schema_path = schema_dir.join("desktop.proto");
+  let desktop_path = schema_dir.join("desktop.proto");
+  let project_path = schema_dir.join("project.proto");
 
-  println!("cargo:rerun-if-changed={}", schema_path.display());
+  println!("cargo:rerun-if-changed={}", desktop_path.display());
+  println!("cargo:rerun-if-changed={}", project_path.display());
 
   prost_build::Config::new()
     .protoc_executable(fetch_protoc())
-    .compile_protos(&[schema_path], &[schema_dir])
-    .expect("failed to compile desktop.proto");
+    .compile_protos(&[desktop_path, project_path], &[schema_dir])
+    .expect("failed to compile desktop.proto/project.proto");
 }
 
 #[cfg(windows)]

@@ -15,7 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from corytm.engine.project import Project
 from corytm.generated.project_pb2 import ClipMovedEvent
-from corytm.runtime.session import ClipMove, materialize_then_move_clips
+from corytm.runtime.session import move_clip_in_session
 
 
 class MoveClipProposal(BaseModel):
@@ -42,11 +42,12 @@ async def move_clip(
 
     This is Dorian's only sanctioned path to move a clip (ADR-004):
     `proposal` must already be a validated `MoveClipProposal`, not raw
-    model output. Execution goes through Corytm Engine's own
-    `with_clip_moved` operation — the same canonical-state update a
-    human-driven edit would produce — and then through EP-006's live
-    native session, so the move's effect on the re-rendered sound is
-    observable the same way a human-driven edit's would be.
+    model output. Execution delegates to Runtime's shared
+    `move_clip_in_session` — Corytm Engine's own `with_clip_moved`
+    operation (the same canonical-state update a human-driven edit
+    would produce) followed by EP-006's live native session, so the
+    move's effect on the re-rendered sound is observable the same way
+    a human-driven edit's would be.
 
     Args:
         project: The canonical project to edit.
@@ -65,24 +66,12 @@ async def move_clip(
             exist on `project` — raised by Engine's own
             `with_clip_moved` before any native process is spawned.
         FileNotFoundError, RuntimeError, TimeoutError: propagated
-            unchanged from `materialize_then_move_clips`.
+            unchanged from `move_clip_in_session`.
     """
-    new_project = project.with_clip_moved(
+    return await move_clip_in_session(
+        project,
         track_id=proposal.track_id,
         clip_id=proposal.clip_id,
         new_start_seconds=proposal.new_start_seconds,
+        output_directory=output_directory,
     )
-
-    _, clip_moved_events = await materialize_then_move_clips(
-        project,
-        [
-            ClipMove(
-                track_id=proposal.track_id,
-                clip_id=proposal.clip_id,
-                new_start_seconds=proposal.new_start_seconds,
-            )
-        ],
-        output_directory,
-    )
-
-    return new_project, clip_moved_events[0]

@@ -1,14 +1,118 @@
 use std::sync::Mutex;
 
+use prost::Message;
 use tauri::async_runtime::Receiver;
 use tauri::{Manager, RunEvent};
 use tauri_plugin_shell::{
   process::{CommandChild, CommandEvent},
   ShellExt,
 };
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpStream;
 
 pub mod desktop_proto {
   include!(concat!(env!("OUT_DIR"), "/corytm.schemas.desktop.rs"));
+}
+
+pub mod project_proto {
+  include!(concat!(env!("OUT_DIR"), "/corytm.schemas.project.rs"));
+}
+
+const TRANSPORT_MAGIC: u32 = 0x636F_7274;
+
+async fn write_frame(stream: &mut TcpStream, payload: &[u8]) -> std::io::Result<()> {
+  stream.write_all(&TRANSPORT_MAGIC.to_le_bytes()).await?;
+  stream
+    .write_all(&(payload.len() as u32).to_le_bytes())
+    .await?;
+  stream.write_all(payload).await
+}
+
+async fn read_frame(stream: &mut TcpStream) -> std::io::Result<Vec<u8>> {
+  let mut header = [0u8; 8];
+  stream.read_exact(&mut header).await?;
+
+  let magic = u32::from_le_bytes(header[0..4].try_into().unwrap());
+  assert_eq!(magic, TRANSPORT_MAGIC, "unexpected frame magic");
+  let length = u32::from_le_bytes(header[4..8].try_into().unwrap()) as usize;
+
+  let mut payload = vec![0u8; length];
+  stream.read_exact(&mut payload).await?;
+  Ok(payload)
+}
+
+/// The Desktop channel's port and per-launch secret, captured once
+/// `spawn_desktop_sidecar` completes the handshake, so any later
+/// command can open its own authenticated connection to it.
+#[derive(Clone)]
+struct DesktopChannel {
+  port: u16,
+  secret: String,
+}
+
+/// A `ClipMovedEvent`'s fields, reshaped for JSON serialization back
+/// to the frontend.
+#[derive(serde::Serialize)]
+struct MoveClipResult {
+  moved: bool,
+  start_seconds: f64,
+  rendered_file_path: String,
+  rendered_sample_count: u64,
+  peak_amplitude: f64,
+}
+
+/// Send the one hardcoded `MoveClipCommand` this Feature triggers, and
+/// return the resulting `ClipMovedEvent`'s fields.
+///
+/// Connects to the already-spawned sidecar's Desktop channel (ADR-010)
+/// using the port/secret `spawn_desktop_sidecar` captured into managed
+/// state, authenticates, sends one `MoveClipCommand` matching the
+/// Python core's own hardcoded fixture project exactly, and decodes
+/// the `ClipMovedEvent` it returns. The Desktop channel server serves
+/// exactly one command per app session (FT-022's own scope), so this
+/// is expected to succeed at most once.
+#[tauri::command]
+async fn move_clip(
+  state: tauri::State<'_, Mutex<Option<DesktopChannel>>>,
+) -> Result<MoveClipResult, String> {
+  let channel = state
+    .lock()
+    .unwrap()
+    .clone()
+    .ok_or_else(|| "desktop channel is not ready yet".to_string())?;
+
+  let mut stream = TcpStream::connect(("127.0.0.1", channel.port))
+    .await
+    .map_err(|error| format!("failed to connect to the desktop channel: {error}"))?;
+
+  write_frame(&mut stream, channel.secret.as_bytes())
+    .await
+    .map_err(|error| format!("failed to authenticate with the desktop channel: {error}"))?;
+
+  let command = project_proto::MoveClipCommand {
+    schema_version: 1,
+    project_id: "desktop-fixture".to_string(),
+    track_id: "track-1".to_string(),
+    clip_id: "clip-1".to_string(),
+    new_start_seconds: 1.0,
+  };
+  write_frame(&mut stream, &command.encode_to_vec())
+    .await
+    .map_err(|error| format!("failed to send the move-clip command: {error}"))?;
+
+  let event_bytes = read_frame(&mut stream)
+    .await
+    .map_err(|error| format!("failed to read the clip-moved event: {error}"))?;
+  let event = project_proto::ClipMovedEvent::decode(event_bytes.as_slice())
+    .map_err(|error| format!("failed to decode the clip-moved event: {error}"))?;
+
+  Ok(MoveClipResult {
+    moved: event.moved,
+    start_seconds: event.start_seconds,
+    rendered_file_path: event.rendered_file_path,
+    rendered_sample_count: event.rendered_sample_count,
+    peak_amplitude: event.peak_amplitude,
+  })
 }
 
 async fn spawn_desktop_sidecar<R: tauri::Runtime>(
@@ -66,6 +170,7 @@ async fn spawn_desktop_sidecar<R: tauri::Runtime>(
 pub fn run() {
   tauri::Builder::default()
     .plugin(tauri_plugin_shell::init())
+    .invoke_handler(tauri::generate_handler![move_clip])
     .setup(|app| {
       if cfg!(debug_assertions) {
         app.handle().plugin(
@@ -76,13 +181,16 @@ pub fn run() {
       }
 
       app.manage(Mutex::new(None::<CommandChild>));
+      app.manage(Mutex::new(None::<DesktopChannel>));
 
       let app_handle = app.handle().clone();
       tauri::async_runtime::spawn(async move {
         match spawn_desktop_sidecar(&app_handle).await {
-          Ok((_receiver, child, port, _secret)) => {
+          Ok((_receiver, child, port, secret)) => {
             log::info!("desktop channel sidecar ready on port {port}");
             *app_handle.state::<Mutex<Option<CommandChild>>>().lock().unwrap() = Some(child);
+            *app_handle.state::<Mutex<Option<DesktopChannel>>>().lock().unwrap() =
+              Some(DesktopChannel { port, secret });
           }
           Err(error) => {
             log::error!("failed to start desktop channel sidecar: {error}");
@@ -190,59 +298,23 @@ mod desktop_proto_tests {
 
 #[cfg(test)]
 mod desktop_channel_tests {
+  use std::sync::Mutex;
   use std::time::Duration;
 
-  use prost::Message;
   use tauri::test::{mock_builder, mock_context, noop_assets};
+  use tauri::Manager;
   use tauri_plugin_shell::process::CommandEvent;
-  use tokio::io::{AsyncReadExt, AsyncWriteExt};
-  use tokio::net::TcpStream;
 
-  use crate::desktop_proto::DesktopProofMessage;
-  use crate::spawn_desktop_sidecar;
-
-  const TRANSPORT_MAGIC: u32 = 0x636F_7274;
-
-  async fn write_frame(stream: &mut TcpStream, payload: &[u8]) {
-    stream
-      .write_all(&TRANSPORT_MAGIC.to_le_bytes())
-      .await
-      .expect("failed to write frame magic");
-    stream
-      .write_all(&(payload.len() as u32).to_le_bytes())
-      .await
-      .expect("failed to write frame length");
-    stream
-      .write_all(payload)
-      .await
-      .expect("failed to write frame payload");
-  }
-
-  async fn read_frame(stream: &mut TcpStream) -> Vec<u8> {
-    let mut header = [0u8; 8];
-    stream
-      .read_exact(&mut header)
-      .await
-      .expect("failed to read frame header");
-
-    let magic = u32::from_le_bytes(header[0..4].try_into().unwrap());
-    assert_eq!(magic, TRANSPORT_MAGIC, "unexpected frame magic");
-    let length = u32::from_le_bytes(header[4..8].try_into().unwrap()) as usize;
-
-    let mut payload = vec![0u8; length];
-    stream
-      .read_exact(&mut payload)
-      .await
-      .expect("failed to read frame payload");
-    payload
-  }
+  use crate::{move_clip, spawn_desktop_sidecar, DesktopChannel};
 
   #[tokio::test]
-  async fn desktop_channel_round_trips_over_the_second_transport() {
+  async fn move_clip_command_moves_the_fixture_clip_and_renders_the_effect() {
     let app = mock_builder()
       .plugin(tauri_plugin_shell::init())
       .build(mock_context(noop_assets()))
       .expect("failed to build mock app");
+
+    app.manage(Mutex::new(None::<DesktopChannel>));
 
     let (mut receiver, mut child, port, secret) = tokio::time::timeout(
       Duration::from_secs(10),
@@ -252,25 +324,23 @@ mod desktop_channel_tests {
     .expect("timed out waiting for the desktop channel handshake")
     .expect("failed to spawn corytm serve and complete its handshake");
 
-    let mut stream = TcpStream::connect(("127.0.0.1", port))
+    *app.state::<Mutex<Option<DesktopChannel>>>().lock().unwrap() =
+      Some(DesktopChannel { port, secret });
+
+    let result = move_clip(app.state())
       .await
-      .expect("failed to connect to the desktop channel");
+      .expect("move_clip command failed");
 
-    write_frame(&mut stream, secret.as_bytes()).await;
-
-    let command = DesktopProofMessage {
-      schema_version: 1,
-      payload: "corytm-desktop-transport-proof-command".to_string(),
-    };
-    write_frame(&mut stream, &command.encode_to_vec()).await;
-
-    let event_bytes = read_frame(&mut stream).await;
-    let event = DesktopProofMessage::decode(event_bytes.as_slice()).expect("failed to decode");
-
-    assert_eq!(event.schema_version, command.schema_version);
-    assert_eq!(event.payload, "corytm-desktop-transport-proof-event");
-
-    drop(stream);
+    assert!(result.moved, "expected the fixture clip to genuinely move");
+    assert_eq!(result.start_seconds, 1.0);
+    assert!(
+      result.rendered_sample_count > 0,
+      "expected a real render sample count"
+    );
+    assert!(
+      result.peak_amplitude > 0.0,
+      "expected a real non-silent render"
+    );
 
     child.write(b"SHUTDOWN\n").expect("failed to write SHUTDOWN");
 

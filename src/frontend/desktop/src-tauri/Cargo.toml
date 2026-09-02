@@ -29,6 +29,7 @@ tauri = { version = "2.11.3", features = [] }
 tauri-plugin-log = "2"
 tauri-plugin-shell = "2"
 prost = "0.14"
+tokio = { version = "1", features = ["net", "io-util"] }
 
 [dev-dependencies]
 tauri = { version = "2.11.3", features = ["test"] }

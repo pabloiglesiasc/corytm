@@ -49,6 +49,7 @@ Source-of-truth order, highest first: this document → approved product strateg
 Each future artifact has exactly one canonical home; others reference it, they do not duplicate it:
 
 - `docs/product/strategy.md`, `docs/product/business-model.md` — Corytm's approved product category, users, platforms, and business-model direction (prospective and normative at the product-strategy level, distinct from a specs-level behavioral contract); canonical enumeration of Protected Product Decisions (§5). Approved principles are distinguished in-document from open commercial/product hypotheses, which carry no protected standing until accepted.
+- `docs/product/design.md` — Corytm's canonical visual-identity and design-system direction across Desktop, Web, and Mobile. It defines approved design principles and system ownership/governance; concrete implementation choices remain open until materialized against real UI work.
 - `docs/product/market-intelligence.md` — mutable competitive/market evidence and hypotheses; informs strategy but never overrides it by itself.
 - `specs/` — what Corytm must do (prospective and normative; may describe behavior not yet implemented).
 - `decisions/` — why a design was chosen.

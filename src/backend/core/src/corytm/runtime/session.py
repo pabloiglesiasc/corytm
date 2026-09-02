@@ -102,6 +102,7 @@ async def _connected_native_runtime(
         str(executable), str(port), secret, str(output_directory)
     )
 
+    writer: asyncio.StreamWriter | None = None
     try:
         reader, writer = await asyncio.wait_for(
             connection_future, timeout=_CONNECT_TIMEOUT_SECONDS
@@ -117,6 +118,7 @@ async def _connected_native_runtime(
 
         writer.close()
         await writer.wait_closed()
+        writer = None
 
         return_code = await asyncio.wait_for(
             process.wait(), timeout=_EVENT_TIMEOUT_SECONDS
@@ -124,6 +126,17 @@ async def _connected_native_runtime(
         if return_code != 0:
             raise RuntimeError(f"native_runtime exited with code {return_code}")
     finally:
+        # `Server.wait_closed()` (Python 3.12.1+) waits for the listening
+        # socket to close *and* for every accepted connection to drop.
+        # Closing our own end here first, on every exit path, is what
+        # actually lets that second condition become true — without it,
+        # a caller-side failure between `yield` and the success path's
+        # own `writer.close()` leaves this writer open and `wait_closed()`
+        # blocks forever on a connection nothing will ever close.
+        if writer is not None:
+            writer.close()
+            await writer.wait_closed()
+
         if process.returncode is None:
             process.kill()
             await process.wait()

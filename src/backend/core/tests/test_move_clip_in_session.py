@@ -1,13 +1,14 @@
 import asyncio
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
 from corytm.engine.clip import AudioClip
 from corytm.engine.project import Project
 from corytm.engine.track import AudioTrack
-from corytm.runtime.session import move_clip_in_session
+from corytm.runtime.session import materialize_project, move_clip_in_session
 
 _SAMPLE_RATE = 44100.0
 
@@ -45,6 +46,24 @@ def test_moves_the_clip_and_renders_the_effect() -> None:
             2.5 * _SAMPLE_RATE, abs=1
         )
         assert clip_moved_event.peak_amplitude > 0.5
+
+
+@pytest.mark.transport
+def test_a_caller_error_mid_session_does_not_deadlock_teardown() -> None:
+    project = _build_one_clip_project()
+
+    async def _scenario() -> None:
+        with (
+            tempfile.TemporaryDirectory() as output_directory,
+            patch(
+                "corytm.runtime.session.to_materialize_command",
+                side_effect=RuntimeError("simulated caller failure"),
+            ),
+            pytest.raises(RuntimeError, match="simulated caller failure"),
+        ):
+            await materialize_project(project, Path(output_directory))
+
+    asyncio.run(asyncio.wait_for(_scenario(), timeout=15))
 
 
 def test_an_unknown_clip_id_is_rejected_before_any_native_process_is_spawned() -> None:

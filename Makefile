@@ -2,7 +2,7 @@
 
 CMAKE_CONFIGURE_FLAGS ?=
 
-check: check-python check-frontend check-desktop check-native check-transport
+check: check-python check-frontend check-native check-desktop check-transport
 
 check-all: clean check
 

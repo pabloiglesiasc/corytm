@@ -303,9 +303,46 @@ mod desktop_channel_tests {
 
   use tauri::test::{mock_builder, mock_context, noop_assets};
   use tauri::Manager;
-  use tauri_plugin_shell::process::CommandEvent;
+  use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 
   use crate::{move_clip, spawn_desktop_sidecar, DesktopChannel};
+
+  /// Kills the wrapped sidecar on drop unless [`Self::disarm`] already
+  /// took it.
+  ///
+  /// `CommandChild` has no `Drop`-based cleanup of its own (confirmed
+  /// against `tauri_plugin_shell`'s source), so a bare local variable
+  /// leaks the real `uv`/`corytm serve`/`native_runtime` process tree
+  /// on any early return — a panicking assertion, a timed-out await —
+  /// between spawn and the test's own explicit `SHUTDOWN` handshake.
+  /// A leaked `corytm serve` blocks forever reading stdin for a
+  /// `SHUTDOWN` line that will now never arrive, which can in turn
+  /// keep the whole CI job from ever observing EOF on that process
+  /// tree's inherited output pipe.
+  struct SidecarGuard(Option<CommandChild>);
+
+  impl SidecarGuard {
+    fn write(&mut self, data: &[u8]) -> Result<(), tauri_plugin_shell::Error> {
+      self
+        .0
+        .as_mut()
+        .expect("sidecar already disarmed")
+        .write(data)
+    }
+
+    /// Give up kill-on-drop once the sidecar's own clean exit is confirmed.
+    fn disarm(&mut self) {
+      self.0.take();
+    }
+  }
+
+  impl Drop for SidecarGuard {
+    fn drop(&mut self) {
+      if let Some(child) = self.0.take() {
+        let _ = child.kill();
+      }
+    }
+  }
 
   #[tokio::test]
   async fn move_clip_command_moves_the_fixture_clip_and_renders_the_effect() {
@@ -316,19 +353,21 @@ mod desktop_channel_tests {
 
     app.manage(Mutex::new(None::<DesktopChannel>));
 
-    let (mut receiver, mut child, port, secret) = tokio::time::timeout(
+    let (mut receiver, child, port, secret) = tokio::time::timeout(
       Duration::from_secs(10),
       spawn_desktop_sidecar(app.handle()),
     )
     .await
     .expect("timed out waiting for the desktop channel handshake")
     .expect("failed to spawn corytm serve and complete its handshake");
+    let mut sidecar = SidecarGuard(Some(child));
 
     *app.state::<Mutex<Option<DesktopChannel>>>().lock().unwrap() =
       Some(DesktopChannel { port, secret });
 
-    let result = move_clip(app.state())
+    let result = tokio::time::timeout(Duration::from_secs(60), move_clip(app.state()))
       .await
+      .expect("timed out waiting for the move_clip command to complete")
       .expect("move_clip command failed");
 
     assert!(result.moved, "expected the fixture clip to genuinely move");
@@ -342,7 +381,9 @@ mod desktop_channel_tests {
       "expected a real non-silent render"
     );
 
-    child.write(b"SHUTDOWN\n").expect("failed to write SHUTDOWN");
+    sidecar
+      .write(b"SHUTDOWN\n")
+      .expect("failed to write SHUTDOWN");
 
     loop {
       let event = tokio::time::timeout(Duration::from_secs(10), receiver.recv())
@@ -355,5 +396,7 @@ mod desktop_channel_tests {
         break;
       }
     }
+
+    sidecar.disarm();
   }
 }

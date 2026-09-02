@@ -67,6 +67,7 @@ async def serve_desktop_channel() -> None:
     print("READY", flush=True)
     print(f"DESKTOP {port} {secret}", flush=True)
 
+    writer: asyncio.StreamWriter | None = None
     try:
         reader, writer = await asyncio.wait_for(
             connection_future, timeout=_AUTHENTICATION_TIMEOUT_SECONDS
@@ -99,7 +100,20 @@ async def serve_desktop_channel() -> None:
 
         writer.close()
         await writer.wait_closed()
+        writer = None
     finally:
+        # `Server.wait_closed()` (Python 3.12.1+) waits for the listening
+        # socket to close *and* for the one accepted connection to drop.
+        # Closing our own end here first, on every exit path, is what
+        # actually lets that second condition become true — without it,
+        # a command-handler failure between accepting the connection and
+        # the success path's own `writer.close()` leaves this writer
+        # open, and `wait_closed()` blocks forever on a connection the
+        # client is itself only ever waiting to read a response from.
+        if writer is not None:
+            writer.close()
+            await writer.wait_closed()
+
         server.close()
         await server.wait_closed()
 

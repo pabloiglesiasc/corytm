@@ -32,6 +32,8 @@ Current milestone and work state are tracked in `status.md` and the correspondin
 
 ## Next-Work Selection Priority
 
+Rolling-wave planning (above) means the PMO tree is not a closed backlog: the absence of an already-materialized Epic, Feature, or Milestone record is never by itself a reason to conclude no work exists. Prefer existing ready PMO work when it is strategically appropriate. When no suitable ready Feature exists, broaden the search to canonical product strategy (`docs/product/strategy.md`, `docs/product/business-model.md`), the current Milestone's own Outcome, architecture/technical state (`docs/technical/architecture.md`, including its Unresolved section), open risks (`docs/project/risks.md`), design direction (`docs/product/design.md`), and demonstrated product gaps — and create the next Epic/Feature just-in-time (`CLAUDE.md` §7) when that evidence supports it, subject to `CLAUDE.md` §5's Protected Decision gate. If the current Milestone's Outcome is already satisfied, or the best next work identified this way no longer belongs naturally inside it, evaluate reconciling that Milestone to `achieved` (`docs/project/format.md`) and shaping the next Milestone's objective, rather than waiting for a pre-existing record. A blocked thread inside the current Milestone does not by itself block unrelated strategic progress elsewhere in that Milestone or beyond it. Concluding no safe work exists is valid only after this broader search — not merely after exhausting already-recorded PMO children.
+
 1. Work required for the current active Milestone
 2. Ready work whose dependencies are satisfied
 3. Work that unlocks other work

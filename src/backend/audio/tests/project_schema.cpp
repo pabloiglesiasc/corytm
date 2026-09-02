@@ -5,6 +5,8 @@
 using corytm::schemas::project::AudioClip;
 using corytm::schemas::project::AudioTrack;
 using corytm::schemas::project::ClipMovedEvent;
+using corytm::schemas::project::Command;
+using corytm::schemas::project::Event;
 using corytm::schemas::project::MaterializeProjectCommand;
 using corytm::schemas::project::MoveClipCommand;
 using corytm::schemas::project::ProjectRenderedEvent;
@@ -83,6 +85,10 @@ int main()
     originalMovedEvent.set_track_id ("track-1");
     originalMovedEvent.set_clip_id ("clip-1");
     originalMovedEvent.set_start_seconds (5.0);
+    originalMovedEvent.set_moved (true);
+    originalMovedEvent.set_rendered_file_path ("/tmp/corytm-project-schema-proof-moved.wav");
+    originalMovedEvent.set_rendered_sample_count (220500);
+    originalMovedEvent.set_peak_amplitude (0.75);
 
     std::string serializedMovedEvent;
     const bool movedEventSerializedOk = originalMovedEvent.SerializeToString (&serializedMovedEvent);
@@ -94,7 +100,71 @@ int main()
                                        && decodedMovedEvent.project_id() == originalMovedEvent.project_id()
                                        && decodedMovedEvent.track_id() == originalMovedEvent.track_id()
                                        && decodedMovedEvent.clip_id() == originalMovedEvent.clip_id()
-                                       && decodedMovedEvent.start_seconds() == originalMovedEvent.start_seconds();
+                                       && decodedMovedEvent.start_seconds() == originalMovedEvent.start_seconds()
+                                       && decodedMovedEvent.moved() == originalMovedEvent.moved()
+                                       && decodedMovedEvent.rendered_file_path() == originalMovedEvent.rendered_file_path()
+                                       && decodedMovedEvent.rendered_sample_count() == originalMovedEvent.rendered_sample_count()
+                                       && decodedMovedEvent.peak_amplitude() == originalMovedEvent.peak_amplitude();
 
-    return commandRoundTripOk && eventRoundTripOk && moveCommandRoundTripOk && movedEventRoundTripOk ? 0 : 1;
+    Command originalMaterializeCommandEnvelope;
+    *originalMaterializeCommandEnvelope.mutable_materialize() = original;
+
+    std::string serializedMaterializeEnvelope;
+    const bool materializeEnvelopeSerializedOk = originalMaterializeCommandEnvelope.SerializeToString (&serializedMaterializeEnvelope);
+
+    Command decodedMaterializeCommandEnvelope;
+    const bool materializeEnvelopeParsedOk = decodedMaterializeCommandEnvelope.ParseFromString (serializedMaterializeEnvelope);
+
+    const bool materializeEnvelopeRoundTripOk = materializeEnvelopeSerializedOk && materializeEnvelopeParsedOk
+                                                && decodedMaterializeCommandEnvelope.has_materialize()
+                                                && ! decodedMaterializeCommandEnvelope.has_move_clip()
+                                                && decodedMaterializeCommandEnvelope.materialize().project().id() == "corytm-project-schema-proof";
+
+    Command originalMoveClipCommandEnvelope;
+    *originalMoveClipCommandEnvelope.mutable_move_clip() = originalMoveCommand;
+
+    std::string serializedMoveClipEnvelope;
+    const bool moveClipEnvelopeSerializedOk = originalMoveClipCommandEnvelope.SerializeToString (&serializedMoveClipEnvelope);
+
+    Command decodedMoveClipCommandEnvelope;
+    const bool moveClipEnvelopeParsedOk = decodedMoveClipCommandEnvelope.ParseFromString (serializedMoveClipEnvelope);
+
+    const bool moveClipEnvelopeRoundTripOk = moveClipEnvelopeSerializedOk && moveClipEnvelopeParsedOk
+                                             && decodedMoveClipCommandEnvelope.has_move_clip()
+                                             && ! decodedMoveClipCommandEnvelope.has_materialize()
+                                             && decodedMoveClipCommandEnvelope.move_clip().clip_id() == "clip-1";
+
+    Event originalProjectRenderedEventEnvelope;
+    *originalProjectRenderedEventEnvelope.mutable_project_rendered() = originalEvent;
+
+    std::string serializedProjectRenderedEnvelope;
+    const bool projectRenderedEnvelopeSerializedOk = originalProjectRenderedEventEnvelope.SerializeToString (&serializedProjectRenderedEnvelope);
+
+    Event decodedProjectRenderedEventEnvelope;
+    const bool projectRenderedEnvelopeParsedOk = decodedProjectRenderedEventEnvelope.ParseFromString (serializedProjectRenderedEnvelope);
+
+    const bool projectRenderedEnvelopeRoundTripOk = projectRenderedEnvelopeSerializedOk && projectRenderedEnvelopeParsedOk
+                                                    && decodedProjectRenderedEventEnvelope.has_project_rendered()
+                                                    && ! decodedProjectRenderedEventEnvelope.has_clip_moved()
+                                                    && decodedProjectRenderedEventEnvelope.project_rendered().rendered_sample_count() == 110250;
+
+    Event originalClipMovedEventEnvelope;
+    *originalClipMovedEventEnvelope.mutable_clip_moved() = originalMovedEvent;
+
+    std::string serializedClipMovedEnvelope;
+    const bool clipMovedEnvelopeSerializedOk = originalClipMovedEventEnvelope.SerializeToString (&serializedClipMovedEnvelope);
+
+    Event decodedClipMovedEventEnvelope;
+    const bool clipMovedEnvelopeParsedOk = decodedClipMovedEventEnvelope.ParseFromString (serializedClipMovedEnvelope);
+
+    const bool clipMovedEnvelopeRoundTripOk = clipMovedEnvelopeSerializedOk && clipMovedEnvelopeParsedOk
+                                              && decodedClipMovedEventEnvelope.has_clip_moved()
+                                              && ! decodedClipMovedEventEnvelope.has_project_rendered()
+                                              && decodedClipMovedEventEnvelope.clip_moved().moved();
+
+    return commandRoundTripOk && eventRoundTripOk && moveCommandRoundTripOk && movedEventRoundTripOk
+                   && materializeEnvelopeRoundTripOk && moveClipEnvelopeRoundTripOk
+                   && projectRenderedEnvelopeRoundTripOk && clipMovedEnvelopeRoundTripOk
+               ? 0
+               : 1;
 }

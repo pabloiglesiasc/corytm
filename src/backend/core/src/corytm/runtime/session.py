@@ -1,24 +1,40 @@
-"""Spawns and drives the Native Audio Runtime for one materialization.
+"""Spawns and drives the Native Audio Runtime over one long-lived session.
 
-Owns the process lifecycle and handshake for a single request/response
-round trip: spawn `native_runtime`, exchange a per-launch secret over a
-loopback socket, send a `MaterializeProjectCommand`, and return the
-`ProjectRenderedEvent` it responds with.
+Owns the process lifecycle and handshake for a `native_runtime` child
+process: spawn it, exchange a per-launch secret over a loopback socket,
+then send one or more `Command`-enveloped wire messages and read back
+their `Event`-enveloped responses, all over the same connection.
 """
 
 import asyncio
 import platform
 import secrets
+from collections.abc import AsyncGenerator, Sequence
+from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import NamedTuple
 
 from corytm.engine.project import Project
-from corytm.generated.project_pb2 import ProjectRenderedEvent
+from corytm.generated.project_pb2 import (
+    ClipMovedEvent,
+    Command,
+    Event,
+    ProjectRenderedEvent,
+)
 
-from .projection import to_materialize_command
+from .projection import to_materialize_command, to_move_clip_command
 from .transport import read_frame, write_frame
 
 _CONNECT_TIMEOUT_SECONDS = 5
 _EVENT_TIMEOUT_SECONDS = 30
+
+
+class ClipMove(NamedTuple):
+    """One clip-move edit intention to send as a `MoveClipCommand`."""
+
+    track_id: str
+    clip_id: str
+    new_start_seconds: float
 
 
 def native_runtime_executable() -> Path:
@@ -36,33 +52,31 @@ def native_runtime_executable() -> Path:
     return build_dir / "native_runtime"
 
 
-async def materialize_project(
-    project: Project, output_directory: Path
-) -> ProjectRenderedEvent:
-    """Render `project` by spawning and driving the Native Audio Runtime.
+@asynccontextmanager
+async def _connected_native_runtime(
+    output_directory: Path,
+) -> AsyncGenerator[tuple[asyncio.StreamReader, asyncio.StreamWriter]]:
+    """Spawn `native_runtime`, connect, and authenticate over the transport.
 
-    Spawns `native_runtime` as a child process, listens on an ephemeral
-    loopback port, authenticates it with a per-call secret, sends
-    `project` as a `MaterializeProjectCommand`, and waits for the
-    `ProjectRenderedEvent` it renders and sends back. The child process
-    and its listening socket are always torn down before returning,
-    including on error.
+    Yields a `(reader, writer)` pair for the caller to drive an arbitrary
+    sequence of commands/events over. On exit, closes the writer and
+    waits for the child process to exit, always tearing down the process
+    and listening socket, including on error.
 
     Args:
-        project: The canonical project to materialize.
         output_directory: Directory the native process should write its
             rendered output into.
 
-    Returns:
-        The `ProjectRenderedEvent` describing the render outcome.
+    Yields:
+        The connected, authenticated stream reader/writer pair.
 
     Raises:
         FileNotFoundError: `native_runtime_executable()` doesn't exist —
             the native build hasn't been run.
         RuntimeError: The spawned process failed to authenticate, or
             exited with a non-zero return code.
-        TimeoutError: The connection, handshake, or event wasn't
-            received within the configured timeout.
+        TimeoutError: The connection or handshake wasn't completed
+            within the configured timeout.
     """
     executable = native_runtime_executable()
 
@@ -99,15 +113,7 @@ async def materialize_project(
         if received_secret.decode("utf-8") != secret:
             raise RuntimeError("native_runtime failed to authenticate")
 
-        command = to_materialize_command(project)
-        write_frame(writer, command.SerializeToString())
-        await writer.drain()
-
-        event_bytes = await asyncio.wait_for(
-            read_frame(reader), timeout=_EVENT_TIMEOUT_SECONDS
-        )
-        event = ProjectRenderedEvent()
-        event.ParseFromString(event_bytes)
+        yield reader, writer
 
         writer.close()
         await writer.wait_closed()
@@ -117,8 +123,6 @@ async def materialize_project(
         )
         if return_code != 0:
             raise RuntimeError(f"native_runtime exited with code {return_code}")
-
-        return event
     finally:
         if process.returncode is None:
             process.kill()
@@ -126,3 +130,107 @@ async def materialize_project(
 
         server.close()
         await server.wait_closed()
+
+
+async def _send_command(writer: asyncio.StreamWriter, command: Command) -> None:
+    write_frame(writer, command.SerializeToString())
+    await writer.drain()
+
+
+async def _read_event(reader: asyncio.StreamReader) -> Event:
+    event_bytes = await asyncio.wait_for(
+        read_frame(reader), timeout=_EVENT_TIMEOUT_SECONDS
+    )
+    event = Event()
+    event.ParseFromString(event_bytes)
+    return event
+
+
+async def materialize_project(
+    project: Project, output_directory: Path
+) -> ProjectRenderedEvent:
+    """Render `project` by spawning and driving the Native Audio Runtime.
+
+    Sends `project` as a `MaterializeProjectCommand` over one connection
+    and returns the `ProjectRenderedEvent` it renders and sends back.
+
+    Args:
+        project: The canonical project to materialize.
+        output_directory: Directory the native process should write its
+            rendered output into.
+
+    Returns:
+        The `ProjectRenderedEvent` describing the render outcome.
+
+    Raises:
+        FileNotFoundError: `native_runtime_executable()` doesn't exist —
+            the native build hasn't been run.
+        RuntimeError: The spawned process failed to authenticate, or
+            exited with a non-zero return code.
+        TimeoutError: The connection, handshake, or event wasn't
+            received within the configured timeout.
+    """
+    async with _connected_native_runtime(output_directory) as (reader, writer):
+        await _send_command(
+            writer, Command(materialize=to_materialize_command(project))
+        )
+        event = await _read_event(reader)
+
+    return event.project_rendered
+
+
+async def materialize_then_move_clips(
+    project: Project, moves: Sequence[ClipMove], output_directory: Path
+) -> tuple[ProjectRenderedEvent, list[ClipMovedEvent]]:
+    """Materialize `project`, then apply `moves` to that same live session.
+
+    Sends one `MaterializeProjectCommand` followed by one
+    `MoveClipCommand` per entry in `moves`, in order, all over the same
+    `native_runtime` connection — proving each move is applied to the
+    still-live `Edit` the materialize command built, not a fresh
+    rebuild. A move with an unknown track/clip id comes back with
+    `moved = False` rather than ending the session, so later entries in
+    `moves` can still succeed.
+
+    Args:
+        project: The canonical project to materialize.
+        moves: Clip moves to apply, in order, to the materialized
+            project's live session.
+        output_directory: Directory the native process should write its
+            rendered output into.
+
+    Returns:
+        The baseline `ProjectRenderedEvent`, and one `ClipMovedEvent`
+        per entry in `moves`, in the same order.
+
+    Raises:
+        FileNotFoundError: `native_runtime_executable()` doesn't exist —
+            the native build hasn't been run.
+        RuntimeError: The spawned process failed to authenticate, or
+            exited with a non-zero return code.
+        TimeoutError: The connection, handshake, or an event wasn't
+            received within the configured timeout.
+    """
+    async with _connected_native_runtime(output_directory) as (reader, writer):
+        await _send_command(
+            writer, Command(materialize=to_materialize_command(project))
+        )
+        rendered_event = (await _read_event(reader)).project_rendered
+
+        clip_moved_events: list[ClipMovedEvent] = []
+
+        for move in moves:
+            await _send_command(
+                writer,
+                Command(
+                    move_clip=to_move_clip_command(
+                        project_id=project.id,
+                        track_id=move.track_id,
+                        clip_id=move.clip_id,
+                        new_start_seconds=move.new_start_seconds,
+                    )
+                ),
+            )
+            clip_moved_events.append((await _read_event(reader)).clip_moved)
+
+    return rendered_event, clip_moved_events

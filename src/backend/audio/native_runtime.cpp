@@ -9,12 +9,17 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <variant>
 
 using namespace tracktion;
-using corytm::native_runtime::decodeMaterializeCommand;
-using corytm::native_runtime::encodeRenderedEvent;
-using corytm::native_runtime::materialize;
+using corytm::native_runtime::buildEdit;
+using corytm::native_runtime::decodeCommand;
+using corytm::native_runtime::encodeClipMovedEvent;
+using corytm::native_runtime::encodeProjectRenderedEvent;
+using corytm::native_runtime::moveClip;
+using corytm::native_runtime::MoveClipSpec;
 using corytm::native_runtime::ProjectSpec;
+using corytm::native_runtime::renderEdit;
 using corytm::native_runtime::RenderResult;
 
 namespace
@@ -70,7 +75,10 @@ namespace
             }) && commandReceived;
 
             if (arrived)
+            {
                 commandBytesOut = std::move (receivedCommandBytes);
+                commandReceived = false;
+            }
 
             return arrived;
         }
@@ -78,6 +86,12 @@ namespace
         void sendEvent (const std::vector<std::byte>& eventBytes)
         {
             sendMessage (juce::MemoryBlock (eventBytes.data(), eventBytes.size()));
+        }
+
+        bool wasConnectionLost() const
+        {
+            const std::lock_guard<std::mutex> lock (mutex);
+            return connectionWasLost;
         }
 
     private:
@@ -104,7 +118,7 @@ namespace
         }
 
         std::string secret;
-        std::mutex mutex;
+        mutable std::mutex mutex;
         std::condition_variable conditionVariable;
         std::vector<std::byte> receivedCommandBytes;
         bool commandReceived = false;
@@ -137,18 +151,51 @@ int main (int argc, char* argv[])
         return 1;
     }
 
+    std::unique_ptr<Edit> liveEdit;
+    std::string liveProjectId;
+    bool sessionSucceeded = true;
     std::vector<std::byte> commandBytes;
 
-    if (! connection.waitForCommand (commandTimeoutMs, commandBytes))
+    while (connection.waitForCommand (commandTimeoutMs, commandBytes))
+    {
+        const auto decoded = decodeCommand (commandBytes);
+
+        if (! decoded)
+        {
+            std::cerr << "native_runtime: received an unrecognised command" << std::endl;
+            return 1;
+        }
+
+        if (const auto* project = std::get_if<ProjectSpec> (&*decoded))
+        {
+            liveProjectId = project->id;
+            liveEdit = buildEdit (engine, *project);
+
+            const RenderResult result = renderEdit (engine, *liveEdit, liveProjectId, outputDirectory);
+            sessionSucceeded = sessionSucceeded && result.success;
+
+            connection.sendEvent (encodeProjectRenderedEvent (liveProjectId, result));
+        }
+        else if (const auto* move = std::get_if<MoveClipSpec> (&*decoded))
+        {
+            RenderResult renderResult { false, {}, 0, 0.0 };
+            const bool moved = liveEdit != nullptr && moveClip (*liveEdit, move->trackId, move->clipId, move->newStartSeconds);
+
+            if (moved)
+            {
+                renderResult = renderEdit (engine, *liveEdit, liveProjectId, outputDirectory);
+                sessionSucceeded = sessionSucceeded && renderResult.success;
+            }
+
+            connection.sendEvent (encodeClipMovedEvent (move->projectId, move->trackId, move->clipId, move->newStartSeconds, moved, renderResult));
+        }
+    }
+
+    if (! connection.wasConnectionLost())
     {
         std::cerr << "native_runtime: command did not arrive in time" << std::endl;
         return 1;
     }
 
-    const ProjectSpec project = decodeMaterializeCommand (commandBytes);
-    const RenderResult result = materialize (engine, project, outputDirectory);
-
-    connection.sendEvent (encodeRenderedEvent (project.id, result));
-
-    return result.success ? 0 : 1;
+    return sessionSucceeded ? 0 : 1;
 }

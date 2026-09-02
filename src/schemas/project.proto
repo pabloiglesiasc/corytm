@@ -48,4 +48,22 @@ message ClipMovedEvent {
   string track_id = 3;
   string clip_id = 4;
   double start_seconds = 5;
+  bool moved = 6;
+  string rendered_file_path = 7;
+  uint64 rendered_sample_count = 8;
+  double peak_amplitude = 9;
+}
+
+message Command {
+  oneof command {
+    MaterializeProjectCommand materialize = 1;
+    MoveClipCommand move_clip = 2;
+  }
+}
+
+message Event {
+  oneof event {
+    ProjectRenderedEvent project_rendered = 1;
+    ClipMovedEvent clip_moved = 2;
+  }
 }

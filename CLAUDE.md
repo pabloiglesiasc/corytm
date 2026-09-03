@@ -22,6 +22,8 @@ Conceptually: Dorian → Corytm Engine → Runtime → Native Audio Runtime → 
 
 Dorian operates only through semantic application tools and services. It must never generate C++ as an execution mechanism, make arbitrary Tracktion calls, bypass application/domain boundaries, or execute arbitrary shell commands as a normal product capability. Human UI actions and Dorian actions must eventually go through the same application/domain API.
 
+Every user-facing capability is delivered vertically, backend/domain authority leading frontend affordance — canonical in `docs/technical/architecture.md`'s Vertical Delivery & Surface Authority section (`docs/project/format.md`'s Sizing applies it to Feature scoping).
+
 ## 3. Ownership
 
 | Universe | Owns | Governs |
@@ -44,11 +46,12 @@ CPO Mandate: the CPO continuously evaluates whether technical execution remains 
 
 ## 4. Knowledge & Authority
 
-Source-of-truth order, highest first: this document → approved product strategy + accepted decisions + approved specs → Feature/Task acceptance criteria → current code and tests → docs → memory. Product strategy, decisions, and specs govern different domains — product direction, architecture/product rationale, and behavioral contract, respectively — and are reconciled with each other on conflict, never mechanically ranked by which file happens to come first. Code and tests reflect current reality but never overrule a higher source. A conflict between higher sources must be surfaced and resolved, never silently decided by picking whatever is convenient.
+Source-of-truth order, highest first: this document → approved product strategy + approved product roadmap + accepted decisions + approved specs → Feature/Task acceptance criteria → current code and tests → docs → memory. Product strategy, product roadmap, decisions, and specs govern different domains — product direction, product-capability/phase mapping, architecture/product rationale, and behavioral contract, respectively — and are reconciled with each other on conflict, never mechanically ranked by which file happens to come first. Code and tests reflect current reality but never overrule a higher source. A conflict between higher sources must be surfaced and resolved, never silently decided by picking whatever is convenient.
 
 Each future artifact has exactly one canonical home; others reference it, they do not duplicate it:
 
 - `docs/product/strategy.md`, `docs/product/business-model.md` — Corytm's approved product category, users, platforms, and business-model direction (prospective and normative at the product-strategy level, distinct from a specs-level behavioral contract); canonical enumeration of Protected Product Decisions (§5). Approved principles are distinguished in-document from open commercial/product hypotheses, which carry no protected standing until accepted.
+- `docs/product/roadmap/` — Corytm's canonical, capability-level map of what belongs to which lifecycle phase, on which surface (`docs/project/plan.md`'s Lifecycle Model); a directory (`README.md`, `alpha.md`, `beta.md`, `stable.md`), mirroring `specs/`/`decisions/`'s own status as directories treated as single canonical artifacts. Normative but mutable: material changes to a capability's phase/surface assignment or to major capability scope are product decisions (§5's Protected Product Decision gate applies when the change reaches that level; routine terse-to-detailed refinement as a capability nears implementation is not). Answers *which* capability belongs where; `docs/project/plan.md` remains canonical for *what evidence/quality* is required to exit a phase.
 - `docs/product/design.md` — Corytm's canonical visual-identity and design-system direction across Desktop, Web, and Mobile. It defines approved design principles and system ownership/governance; concrete implementation choices remain open until materialized against real UI work.
 - `docs/product/market-intelligence.md` — mutable competitive/market evidence and hypotheses; informs strategy but never overrides it by itself.
 - `specs/` — what Corytm must do (prospective and normative; may describe behavior not yet implemented).

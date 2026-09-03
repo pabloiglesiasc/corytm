@@ -1,6 +1,6 @@
 # Corytm Product Strategy
 
-Status: canonical, human-approved product direction — established 2026-09-01. This document is direction, not a finished specification, a roadmap, or a design system; it answers what Corytm is, for whom, across which surfaces, and why, at the product-strategy level `CLAUDE.md` §4 recognizes as canonical. It supersedes `docs/product/overview.md` (deleted; its content is absorbed below). `docs/product/business-model.md` carries the business/economic direction; `docs/product/market-intelligence.md` carries mutable competitive evidence. Neither this document nor its siblings decides implementation — `docs/technical/architecture.md`, accepted ADRs, and `specs/` govern that, and are not overridden by anything here.
+Status: canonical, human-approved product direction — established 2026-09-01. This document is direction, not a finished specification, a roadmap, or a design system; it answers what Corytm is, for whom, across which surfaces, and why, at the product-strategy level `CLAUDE.md` §4 recognizes as canonical. See `docs/product/roadmap/` for the capability-level product roadmap this document does not itself provide. It supersedes `docs/product/overview.md` (deleted; its content is absorbed below). `docs/product/business-model.md` carries the business/economic direction; `docs/product/market-intelligence.md` carries mutable competitive evidence. Neither this document nor its siblings decides implementation — `docs/technical/architecture.md`, accepted ADRs, and `specs/` govern that, and are not overridden by anything here.
 
 Every statement below is either an **Approved Principle** (§17) — accepted, protected under `CLAUDE.md` §5 if it is a Protected Product Decision (§18) — or an explicitly marked **hypothesis/open question** (§19). Do not read illustrative detail elsewhere in this document as approved unless §17 says so.
 
@@ -110,7 +110,7 @@ The objective is explicitly not to reconstruct the exact original DAW session, p
 
 Strategic experience: import existing music → Corytm understands its musical structure → Dorian can reason about and modify it semantically.
 
-This reinforces the already-approved principle (§5) that canonical Corytm project state represents musical meaning independently of how it originated — manual editing, Dorian semantic operations, generative models, MIDI/audio import, and multimodal inference are all legitimate origins of the same canonical representation. Treated as a high-differentiation future opportunity and potential moat (§15), not an Alpha commitment, current roadmap item, or implementation requirement — see §19's open question on whether and when it is pursued.
+This reinforces the already-approved principle (§5) that canonical Corytm project state represents musical meaning independently of how it originated — manual editing, Dorian semantic operations, generative models, MIDI/audio import, and multimodal inference are all legitimate origins of the same canonical representation. Treated as a high-differentiation future opportunity and potential moat (§15) — represented in `docs/product/roadmap/stable.md` only as a `Commitment: Conditional` entry (visible aspirational scope, not committed lifecycle-exit scope) until a Product Decision activates it — see §19's open question on whether and when it is pursued.
 
 ## 13. Storage and Cloud Principle
 
@@ -124,7 +124,7 @@ Full lifecycle Objective/Exit-criteria text is canonical in `docs/project/plan.m
 
 **Beta / platform expansion** should eventually combine a credible usable Desktop experience, proof of Creator-oriented Web workflows, project/account/cloud foundations where commercially necessary, and commercial distribution foundations — no rigid Beta scope is created by this document. Web Studio should generally validate Creator workflows before committing heavily to Mobile; Mobile follows validated Creator product demand rather than being built merely because it is part of long-term strategy.
 
-**Optional long-term social/community vision** — project sharing, remixing, creator discovery, public projects, community/social capabilities — is optional long-term vision only, not a roadmap commitment. It must not cause Alpha/Beta architecture to prematurely introduce social graphs, feeds, moderation systems, community infrastructure, or public-project architecture, unless later justified independently.
+**Optional long-term social/community vision** — project sharing, remixing, creator discovery, public projects, community/social capabilities — is represented in `docs/product/roadmap/stable.md` only as `Commitment: Conditional` entries — visible aspirational scope, not committed lifecycle-exit scope, until a Product Decision activates them. It must not cause Alpha/Beta architecture to prematurely introduce social graphs, feeds, moderation systems, community infrastructure, or public-project architecture, unless later justified independently.
 
 ## 15. Strategic Differentiation
 
@@ -203,8 +203,9 @@ Do not silently elevate these to permanent commitments:
 - Exact generative-audio providers.
 - Whether Corytm ever trains proprietary audio models.
 - Detailed social/community product direction.
-- Precise Beta scope.
 - Whether and when Audio-to-Project Inference (§12) is pursued, and to what fidelity.
+
+"Precise Beta scope" is answered by `docs/product/roadmap/beta.md`'s capabilities as of its acceptance; this list's other items — including whether/when Audio-to-Project Inference (§12) is pursued and detailed social/community direction — remain genuinely open even though both now have a `Commitment: Conditional` placeholder in `docs/product/roadmap/stable.md`.
 
 Where any existing product doc states one of these as a fixed commitment without human approval, surface the conflict rather than resolving it silently.
 

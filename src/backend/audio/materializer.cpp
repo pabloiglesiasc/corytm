@@ -39,9 +39,9 @@ namespace corytm::native_runtime
         }
     }
 
-    std::unique_ptr<Edit> buildEdit (Engine& engine, const ProjectSpec& project)
+    std::unique_ptr<Edit> buildEdit (Engine& engine, const ProjectSpec& project, Edit::EditRole role)
     {
-        auto edit = Edit::createSingleTrackEdit (engine, Edit::EditRole::forRendering);
+        auto edit = Edit::createSingleTrackEdit (engine, role);
 
         if (project.tracks.empty())
             return edit;
@@ -152,5 +152,57 @@ namespace corytm::native_runtime
         auto edit = buildEdit (engine, project);
 
         return renderEdit (engine, *edit, project.id, outputDirectory);
+    }
+
+    bool openRealtimeOutputDevice (Engine& engine)
+    {
+        constexpr int deviceSettleTimeoutMs = 5000;
+
+        DeviceManager& deviceManager = engine.getDeviceManager();
+        deviceManager.initialise (0, 2);
+
+        if (deviceManager.deviceManager.getCurrentAudioDevice() == nullptr)
+            return false;
+
+        // DeviceManager::initialise() triggers both its wave-device-list rebuild
+        // (DeviceManager::rescanWaveDeviceList()) and its MIDI device scan
+        // (DeviceManager::rescanMidiDeviceList()) asynchronously, resolved on the message
+        // thread as each completes independently. Building and playing an Edit before either
+        // one settles races it: an already-live EditPlaybackContext's device list gets cleared
+        // and reloaded out from under it (DeviceManager::clearAllContextDevices()/
+        // reloadAllContextDevices(), called from both DeviceManager::handleAsyncUpdate() and
+        // DeviceManager::applyNewMidiDeviceList()), which stops the transport. The wave rebuild
+        // is usually near-instant; the MIDI scan alone was observed taking anywhere from ~10ms
+        // to ~600ms on real hardware. Wait for both here so every caller of this function gets
+        // an already-settled device manager.
+        const juce::uint32 deadline = juce::Time::getMillisecondCounter() + (juce::uint32) deviceSettleTimeoutMs;
+
+        while ((deviceManager.getNumWaveOutDevices() == 0 || deviceManager.getNumMidiInDevices() == 0)
+               && juce::Time::getMillisecondCounter() < deadline)
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (10);
+
+        return deviceManager.getNumWaveOutDevices() > 0;
+    }
+
+    void startPlayback (Edit& edit)
+    {
+        edit.getTransport().play (false);
+    }
+
+    void stopPlayback (Edit& edit)
+    {
+        TransportControl& transport = edit.getTransport();
+        transport.stop (false, false);
+        transport.freePlaybackContext();
+    }
+
+    bool isPlaying (const Edit& edit)
+    {
+        return edit.getTransport().isPlaying();
+    }
+
+    double getPlaybackPositionSeconds (const Edit& edit)
+    {
+        return edit.getTransport().getPosition().inSeconds();
     }
 }

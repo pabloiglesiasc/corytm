@@ -130,7 +130,8 @@ target_link_libraries(materializer PUBLIC
     tracktion::tracktion_core
     tracktion::tracktion_engine
     tracktion::tracktion_graph
-    juce::juce_audio_formats)
+    juce::juce_audio_formats
+    juce::juce_audio_devices)
 
 add_executable(materializer_proof tests/materializer_proof.cpp)
 
@@ -152,6 +153,18 @@ target_compile_definitions(live_session_proof PRIVATE
     JUCE_MODAL_LOOPS_PERMITTED=1)
 
 target_link_libraries(live_session_proof PRIVATE
+    materializer
+    juce::juce_audio_devices
+    juce::juce_audio_utils)
+
+add_executable(playback_proof tests/playback_proof.cpp)
+
+target_compile_definitions(playback_proof PRIVATE
+    JUCE_USE_CURL=0
+    JUCE_WEB_BROWSER=0
+    JUCE_MODAL_LOOPS_PERMITTED=1)
+
+target_link_libraries(playback_proof PRIVATE
     materializer
     juce::juce_audio_devices
     juce::juce_audio_utils)
@@ -182,3 +195,4 @@ add_test(NAME proof_schema COMMAND proof_schema)
 add_test(NAME project_schema COMMAND project_schema)
 add_test(NAME materializer_proof COMMAND materializer_proof)
 add_test(NAME live_session_proof COMMAND live_session_proof)
+add_test(NAME playback_proof COMMAND playback_proof)

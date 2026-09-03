@@ -14,6 +14,9 @@
     "allow-open-project",
     "allow-add-track",
     "allow-add-clip",
+    "allow-play",
+    "allow-stop",
+    "allow-get-playback-position",
     "allow-desktop-channel-ready"
   ]
 }

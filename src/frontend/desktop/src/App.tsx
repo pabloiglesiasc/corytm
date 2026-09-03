@@ -43,6 +43,19 @@ type AudioClipAddedResult = {
   peak_amplitude: number
 }
 
+type PlaybackStartedResult = {
+  device_opened: boolean
+}
+
+type PlaybackPositionResult = {
+  is_playing: boolean
+  position_seconds: number
+}
+
+type PlaybackStoppedResult = {
+  final_position_seconds: number
+}
+
 type CommandResult =
   | MoveClipResult
   | ProjectCreatedResult
@@ -50,11 +63,21 @@ type CommandResult =
   | ProjectOpenedResult
   | AudioTrackAddedResult
   | AudioClipAddedResult
+  | PlaybackStartedResult
+  | PlaybackStoppedResult
 
 const PROJECT_FILE_FILTER = [{ name: 'Corytm Project', extensions: ['json'] }]
 const DEFAULT_CLIP_DURATION_SECONDS = 2
 const CHANNEL_READY_POLL_INTERVAL_MS = 200
 const CHANNEL_READY_STEADY_POLL_INTERVAL_MS = 2000
+const PLAYBACK_POSITION_POLL_INTERVAL_MS = 200
+
+function formatPlaybackPosition(totalSeconds: number): string {
+  const wholeSeconds = Math.max(0, Math.floor(totalSeconds))
+  const minutes = Math.floor(wholeSeconds / 60)
+  const seconds = wholeSeconds % 60
+  return `${minutes}:${seconds.toString().padStart(2, '0')}`
+}
 
 function App() {
   const [result, setResult] = useState<CommandResult | null>(null)
@@ -91,6 +114,14 @@ function App() {
   // Move Clip's own fixture-only limitation above.
   const [trackId, setTrackId] = useState<string | null>(null)
   const [clipDuration, setClipDuration] = useState(DEFAULT_CLIP_DURATION_SECONDS)
+  // Play needs at least one clip to materialize a playable Edit from —
+  // set once Add Clip succeeds, or once Open reports genuine rendered
+  // output (a reliable proxy for "this project has audio to play",
+  // since track_count alone doesn't distinguish an empty track from
+  // one with clips).
+  const [hasClip, setHasClip] = useState(false)
+  const [playing, setPlaying] = useState(false)
+  const [playbackPositionSeconds, setPlaybackPositionSeconds] = useState(0)
 
   useEffect(() => {
     let cancelled = false
@@ -147,6 +178,7 @@ function App() {
       setFixtureClipAvailable(false)
       setCanAddTrack(true)
       setTrackId(null)
+      setHasClip(false)
       return created
     })
   }
@@ -177,6 +209,7 @@ function App() {
       setFixtureClipAvailable(false)
       setCanAddTrack(opened.track_count === 0)
       setTrackId(null)
+      setHasClip(opened.rendered_sample_count > 0)
       return opened
     })
   }
@@ -198,15 +231,75 @@ function App() {
     if (trackId === null) {
       return
     }
-    await run(() =>
-      invoke<AudioClipAddedResult>('add_clip', {
+    await run(async () => {
+      const added = await invoke<AudioClipAddedResult>('add_clip', {
         trackId,
         durationSeconds: clipDuration,
-      }),
-    )
+      })
+      setHasClip(true)
+      return added
+    })
   }
 
-  const controlsDisabled = pending || !channelReady
+  async function handlePlay() {
+    await run(async () => {
+      const started = await invoke<PlaybackStartedResult>('play')
+      if (started.device_opened) {
+        setPlaybackPositionSeconds(0)
+        setPlaying(true)
+      }
+      return started
+    })
+  }
+
+  async function handleStop() {
+    await run(async () => {
+      const stopped = await invoke<PlaybackStoppedResult>('stop')
+      setPlaying(false)
+      return stopped
+    })
+  }
+
+  useEffect(() => {
+    if (!playing) {
+      return
+    }
+    let cancelled = false
+
+    async function poll() {
+      if (cancelled) {
+        return
+      }
+      try {
+        const position = await invoke<PlaybackPositionResult>(
+          'get_playback_position',
+        )
+        if (cancelled) {
+          return
+        }
+        setPlaybackPositionSeconds(position.position_seconds)
+        if (!position.is_playing) {
+          setPlaying(false)
+          return
+        }
+      } catch (pollError) {
+        if (!cancelled) {
+          setPlaying(false)
+          setError(String(pollError))
+        }
+        return
+      }
+      setTimeout(poll, PLAYBACK_POSITION_POLL_INTERVAL_MS)
+    }
+
+    poll()
+
+    return () => {
+      cancelled = true
+    }
+  }, [playing])
+
+  const controlsDisabled = pending || !channelReady || playing
 
   return (
     <div className="flex min-h-screen flex-col">
@@ -275,6 +368,38 @@ function App() {
             >
               Add Clip
             </Button>
+          </div>
+        </section>
+        <section className="border-border bg-surface rounded-md border p-4">
+          <h2 className="text-text mb-3 font-sans text-sm font-semibold">
+            Playback
+          </h2>
+          <div className="flex flex-wrap items-center gap-3">
+            <Button
+              variant="primary"
+              onClick={handlePlay}
+              disabled={controlsDisabled || !hasClip}
+            >
+              Play
+            </Button>
+            <Button
+              onClick={handleStop}
+              disabled={pending || !channelReady || !playing}
+            >
+              Stop
+            </Button>
+            <span role="status" className="text-text-muted font-sans text-xs">
+              {playing ? 'Playing' : 'Stopped'}
+            </span>
+            <span className="text-text-muted flex items-center gap-2 font-mono text-xs">
+              {playing && (
+                <span
+                  aria-hidden="true"
+                  className="bg-accent h-2 w-2 rounded-full"
+                />
+              )}
+              {formatPlaybackPosition(playbackPositionSeconds)}
+            </span>
           </div>
         </section>
       </main>

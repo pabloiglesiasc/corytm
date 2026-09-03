@@ -18,6 +18,21 @@ namespace corytm::native_runtime
 
     RenderResult materialize (tracktion::Engine& engine, const ProjectSpec& project, const juce::File& outputDirectory);
 
+    // The position, in seconds, where `edit`'s last clip ends — the
+    // mechanical length of its already-materialized content, not a
+    // musical/arrangement interpretation. Shared by `renderEdit` (an
+    // offline render needs exactly this long) and real-time playback's
+    // own effective-end-of-content stop (see `native_runtime.cpp`).
+    double getEditEndSeconds (tracktion::Edit& edit);
+
+    // Opens a real audio output device via `DeviceManager`, blocking
+    // until it settles. Idempotent: a second call against an
+    // already-open, already-settled device returns `true` immediately
+    // without re-triggering `DeviceManager::initialise()`'s async
+    // rescans — callers may call this speculatively ahead of `Play`
+    // (to pay its cost before the user is waiting on it) and again
+    // from `Play` itself as a defensive fallback, at negligible cost
+    // once already warm.
     bool openRealtimeOutputDevice (tracktion::Engine& engine);
 
     void startPlayback (tracktion::Edit& edit);

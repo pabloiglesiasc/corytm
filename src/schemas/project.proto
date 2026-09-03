@@ -117,6 +117,46 @@ message AudioClipAddedEvent {
   double peak_amplitude = 9;
 }
 
+message PlayCommand {
+  uint32 schema_version = 1;
+  Project project = 2;
+}
+
+message PlaybackStartedEvent {
+  uint32 schema_version = 1;
+  string project_id = 2;
+  bool device_opened = 3;
+}
+
+message StopCommand {
+  uint32 schema_version = 1;
+}
+
+message PlaybackStoppedEvent {
+  uint32 schema_version = 1;
+  string project_id = 2;
+  double final_position_seconds = 3;
+}
+
+message GetPlaybackPositionCommand {
+  uint32 schema_version = 1;
+}
+
+message PlaybackPositionEvent {
+  uint32 schema_version = 1;
+  bool is_playing = 2;
+  double position_seconds = 3;
+}
+
+message PrepareDeviceCommand {
+  uint32 schema_version = 1;
+}
+
+message DevicePreparedEvent {
+  uint32 schema_version = 1;
+  bool device_opened = 2;
+}
+
 message Command {
   oneof command {
     MaterializeProjectCommand materialize = 1;
@@ -126,6 +166,10 @@ message Command {
     OpenProjectCommand open_project = 5;
     AddAudioTrackCommand add_track = 6;
     AddAudioClipCommand add_clip = 7;
+    PlayCommand play = 8;
+    StopCommand stop = 9;
+    GetPlaybackPositionCommand get_playback_position = 10;
+    PrepareDeviceCommand prepare_device = 11;
   }
 }
 
@@ -138,5 +182,9 @@ message Event {
     ProjectOpenedEvent project_opened = 5;
     AudioTrackAddedEvent track_added = 6;
     AudioClipAddedEvent clip_added = 7;
+    PlaybackStartedEvent playback_started = 8;
+    PlaybackStoppedEvent playback_stopped = 9;
+    PlaybackPositionEvent playback_position = 10;
+    DevicePreparedEvent device_prepared = 11;
   }
 }

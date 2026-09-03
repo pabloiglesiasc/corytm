@@ -14,10 +14,16 @@ from corytm.generated.project_pb2 import (
     Command,
     CreateProjectCommand,
     Event,
+    GetPlaybackPositionCommand,
     MoveClipCommand,
     OpenProjectCommand,
+    PlayCommand,
     SaveProjectCommand,
+    StopCommand,
 )
+from corytm.generated.project_pb2 import AudioClip as AudioClipMessage
+from corytm.generated.project_pb2 import AudioTrack as AudioTrackMessage
+from corytm.generated.project_pb2 import Project as ProjectMessage
 from corytm.runtime.desktop import serve_desktop_channel
 from corytm.runtime.transport import read_frame, write_frame
 
@@ -549,6 +555,500 @@ def test_move_clip_still_works_without_any_prior_command() -> None:
             assert moved.clip_moved.start_seconds == 1.0
             assert moved.clip_moved.rendered_sample_count > 0
             assert moved.clip_moved.peak_amplitude > 0.0
+
+            writer.close()
+            await writer.wait_closed()
+
+            await asyncio.wait_for(server_task, timeout=5)
+        finally:
+            sys.stdout = original_stdout
+            sys.stdin = original_stdin
+
+    asyncio.run(asyncio.wait_for(_scenario(), timeout=30))
+
+
+@pytest.mark.transport
+def test_play_reports_advancing_position_and_stop_halts_it() -> None:
+    """Drives the real Play -> GetPlaybackPosition -> Stop path.
+
+    Unlike every other command this file exercises, Play spawns and
+    holds its own dedicated `native_runtime` process across this whole
+    sequence (`PlaybackSession`) rather than the one-shot
+    spawn-per-command shape `move_clip`/`add_clip` use — this is the
+    test proving that lifecycle actually works end to end, not just in
+    isolation (TK-039's own native-level finding).
+
+    Tolerates, rather than fails on, a test environment with no real
+    audio output device (`device_opened=False`): CI runners commonly
+    expose none (confirmed directly for Windows in TK-039/RSK-018), in
+    which case position genuinely cannot advance and this test reports
+    that rather than asserting on a codepath that never ran — mirroring
+    `playback_proof`'s own soft-skip precedent.
+    """
+
+    async def _scenario() -> None:
+        stdout = _CapturingStdout()
+        original_stdout = sys.stdout
+        original_stdin = sys.stdin
+        sys.stdout = stdout
+        sys.stdin = _FakeStdin()
+        try:
+            server_task = asyncio.create_task(serve_desktop_channel())
+
+            port, secret = await asyncio.wait_for(_read_handshake(stdout), timeout=5)
+
+            reader, writer = await asyncio.open_connection("127.0.0.1", port)
+            write_frame(writer, secret.encode("utf-8"))
+            await writer.drain()
+
+            created = await _exchange(
+                writer,
+                reader,
+                Command(create_project=CreateProjectCommand(schema_version=1)),
+            )
+            project_id = created.project_created.project_id
+
+            track_added = await _exchange(
+                writer,
+                reader,
+                Command(add_track=AddAudioTrackCommand(schema_version=1)),
+            )
+            track_id = track_added.track_added.track_id
+
+            clip_added = await _exchange(
+                writer,
+                reader,
+                Command(
+                    add_clip=AddAudioClipCommand(
+                        schema_version=1, track_id=track_id, duration_seconds=3.0
+                    )
+                ),
+            )
+
+            project = ProjectMessage(
+                schema_version=1,
+                id=project_id,
+                tracks=[
+                    AudioTrackMessage(
+                        schema_version=1,
+                        id=track_id,
+                        clips=[
+                            AudioClipMessage(
+                                schema_version=1,
+                                id=clip_added.clip_added.clip_id,
+                                start_seconds=clip_added.clip_added.start_seconds,
+                                duration_seconds=clip_added.clip_added.duration_seconds,
+                            )
+                        ],
+                    )
+                ],
+            )
+
+            started = await _exchange(
+                writer,
+                reader,
+                Command(play=PlayCommand(schema_version=1, project=project)),
+            )
+            assert started.WhichOneof("event") == "playback_started"
+
+            if not started.playback_started.device_opened:
+                writer.close()
+                await writer.wait_closed()
+                await asyncio.wait_for(server_task, timeout=5)
+                pytest.skip("no real audio output device available in this environment")
+
+            first_position = await _exchange(
+                writer,
+                reader,
+                Command(
+                    get_playback_position=GetPlaybackPositionCommand(schema_version=1)
+                ),
+            )
+            assert first_position.WhichOneof("event") == "playback_position"
+            assert first_position.playback_position.is_playing is True
+
+            await asyncio.sleep(0.3)
+
+            second_position = await _exchange(
+                writer,
+                reader,
+                Command(
+                    get_playback_position=GetPlaybackPositionCommand(schema_version=1)
+                ),
+            )
+            assert second_position.playback_position.is_playing is True
+            assert (
+                second_position.playback_position.position_seconds
+                > first_position.playback_position.position_seconds
+            ), "expected playback position to genuinely advance"
+
+            stopped = await _exchange(
+                writer, reader, Command(stop=StopCommand(schema_version=1))
+            )
+            assert stopped.WhichOneof("event") == "playback_stopped"
+
+            after_stop = await _exchange(
+                writer,
+                reader,
+                Command(
+                    get_playback_position=GetPlaybackPositionCommand(schema_version=1)
+                ),
+            )
+            assert after_stop.playback_position.is_playing is False
+
+            writer.close()
+            await writer.wait_closed()
+
+            await asyncio.wait_for(server_task, timeout=5)
+        finally:
+            sys.stdout = original_stdout
+            sys.stdin = original_stdin
+
+    asyncio.run(asyncio.wait_for(_scenario(), timeout=30))
+
+
+@pytest.mark.transport
+def test_play_is_fast_once_the_device_is_warm() -> None:
+    """Regression test for FT-030's human-validation latency defect.
+
+    Human validation found click-to-audible/playhead latency of
+    ~3-4s — diagnosed to a real, several-second macOS CoreMIDI cold-
+    start cost inside `openRealtimeOutputDevice`, paid on every single
+    Play because each one used to spawn a brand new `native_runtime`
+    process. Fixed by spawning one playback process per Desktop-channel
+    connection and eagerly warming its device (`PlaybackSession.open`,
+    called by `_run_session` before the first command is even read)
+    instead of on Play itself.
+
+    This test sleeps well past that real warm-up cost (confirmed
+    empirically to be under ~5.5s locally) before timing Play itself,
+    mirroring real usage: a human takes several seconds clicking
+    through New Project -> Add Track -> Add Clip before ever reaching
+    Play, which is plenty of time for the background warm-up to finish
+    invisibly. The bound asserted (1.5s) is deliberately looser than
+    FT-030's own <500ms Alpha ceiling to absorb real CI/test-harness
+    overhead (process scheduling, protobuf (de)serialization, socket
+    round trips) while still failing hard against a real regression
+    back to multi-second latency.
+    """
+
+    async def _scenario() -> None:
+        stdout = _CapturingStdout()
+        original_stdout = sys.stdout
+        original_stdin = sys.stdin
+        sys.stdout = stdout
+        sys.stdin = _FakeStdin()
+        try:
+            server_task = asyncio.create_task(serve_desktop_channel())
+
+            port, secret = await asyncio.wait_for(_read_handshake(stdout), timeout=5)
+
+            reader, writer = await asyncio.open_connection("127.0.0.1", port)
+            write_frame(writer, secret.encode("utf-8"))
+            await writer.drain()
+
+            created = await _exchange(
+                writer,
+                reader,
+                Command(create_project=CreateProjectCommand(schema_version=1)),
+            )
+            project_id = created.project_created.project_id
+
+            track_added = await _exchange(
+                writer,
+                reader,
+                Command(add_track=AddAudioTrackCommand(schema_version=1)),
+            )
+            track_id = track_added.track_added.track_id
+
+            clip_added = await _exchange(
+                writer,
+                reader,
+                Command(
+                    add_clip=AddAudioClipCommand(
+                        schema_version=1, track_id=track_id, duration_seconds=3.0
+                    )
+                ),
+            )
+
+            # Give the background device warm-up plenty of real time to
+            # finish before timing Play itself — this is the whole point
+            # of the fix: real usage always has this much slack.
+            await asyncio.sleep(6.0)
+
+            project = ProjectMessage(
+                schema_version=1,
+                id=project_id,
+                tracks=[
+                    AudioTrackMessage(
+                        schema_version=1,
+                        id=track_id,
+                        clips=[
+                            AudioClipMessage(
+                                schema_version=1,
+                                id=clip_added.clip_added.clip_id,
+                                start_seconds=clip_added.clip_added.start_seconds,
+                                duration_seconds=clip_added.clip_added.duration_seconds,
+                            )
+                        ],
+                    )
+                ],
+            )
+
+            play_start = asyncio.get_event_loop().time()
+            started = await _exchange(
+                writer,
+                reader,
+                Command(play=PlayCommand(schema_version=1, project=project)),
+            )
+            play_latency_seconds = asyncio.get_event_loop().time() - play_start
+
+            await _exchange(writer, reader, Command(stop=StopCommand(schema_version=1)))
+
+            writer.close()
+            await writer.wait_closed()
+
+            await asyncio.wait_for(server_task, timeout=5)
+
+            if not started.playback_started.device_opened:
+                pytest.skip("no real audio output device available in this environment")
+
+            assert play_latency_seconds < 1.5, (
+                f"expected a warm Play to complete in well under 1.5s, took "
+                f"{play_latency_seconds:.3f}s — the device-open cost may not "
+                f"be getting paid ahead of Play any more"
+            )
+        finally:
+            sys.stdout = original_stdout
+            sys.stdin = original_stdin
+
+    asyncio.run(asyncio.wait_for(_scenario(), timeout=30))
+
+
+@pytest.mark.transport
+def test_playback_stops_automatically_at_the_effective_end() -> None:
+    """Regression test for FT-030's human-validation auto-stop defect.
+
+    Human validation found the playhead advancing indefinitely past the
+    end of the project's content until the user manually pressed Stop.
+    Confirmed empirically that Tracktion's own transport does not stop
+    itself once an Edit's content ends (it keeps running, producing
+    silence) — Corytm's Native Audio Runtime is the authoritative layer
+    that now enforces this instead (`waitForNextCommand`'s poll loop,
+    `native_runtime.cpp`), so `is_playing` itself becomes authoritative
+    for every caller, including this test's own `GetPlaybackPosition`
+    poll — no separate frontend timer is involved or needed.
+    """
+
+    async def _scenario() -> None:
+        stdout = _CapturingStdout()
+        original_stdout = sys.stdout
+        original_stdin = sys.stdin
+        sys.stdout = stdout
+        sys.stdin = _FakeStdin()
+        try:
+            server_task = asyncio.create_task(serve_desktop_channel())
+
+            port, secret = await asyncio.wait_for(_read_handshake(stdout), timeout=5)
+
+            reader, writer = await asyncio.open_connection("127.0.0.1", port)
+            write_frame(writer, secret.encode("utf-8"))
+            await writer.drain()
+
+            created = await _exchange(
+                writer,
+                reader,
+                Command(create_project=CreateProjectCommand(schema_version=1)),
+            )
+            project_id = created.project_created.project_id
+
+            track_added = await _exchange(
+                writer,
+                reader,
+                Command(add_track=AddAudioTrackCommand(schema_version=1)),
+            )
+            track_id = track_added.track_added.track_id
+
+            clip_added = await _exchange(
+                writer,
+                reader,
+                Command(
+                    add_clip=AddAudioClipCommand(
+                        schema_version=1, track_id=track_id, duration_seconds=0.5
+                    )
+                ),
+            )
+
+            project = ProjectMessage(
+                schema_version=1,
+                id=project_id,
+                tracks=[
+                    AudioTrackMessage(
+                        schema_version=1,
+                        id=track_id,
+                        clips=[
+                            AudioClipMessage(
+                                schema_version=1,
+                                id=clip_added.clip_added.clip_id,
+                                start_seconds=clip_added.clip_added.start_seconds,
+                                duration_seconds=clip_added.clip_added.duration_seconds,
+                            )
+                        ],
+                    )
+                ],
+            )
+
+            started = await _exchange(
+                writer,
+                reader,
+                Command(play=PlayCommand(schema_version=1, project=project)),
+            )
+
+            if not started.playback_started.device_opened:
+                writer.close()
+                await writer.wait_closed()
+                await asyncio.wait_for(server_task, timeout=5)
+                pytest.skip("no real audio output device available in this environment")
+
+            # Never send an explicit Stop -- only the effective-end
+            # auto-stop should end this, well past the 0.5s clip.
+            await asyncio.sleep(1.2)
+
+            position = await _exchange(
+                writer,
+                reader,
+                Command(
+                    get_playback_position=GetPlaybackPositionCommand(schema_version=1)
+                ),
+            )
+            assert position.playback_position.is_playing is False, (
+                "expected playback to have auto-stopped at the effective end "
+                "of the 0.5s clip without any explicit Stop"
+            )
+
+            writer.close()
+            await writer.wait_closed()
+
+            await asyncio.wait_for(server_task, timeout=5)
+        finally:
+            sys.stdout = original_stdout
+            sys.stdin = original_stdin
+
+    asyncio.run(asyncio.wait_for(_scenario(), timeout=30))
+
+
+@pytest.mark.transport
+def test_stop_then_play_resumes_from_the_stopped_position() -> None:
+    """Regression test for FT-030's human-validation stop/resume defect.
+
+    Human validation found Stop followed by Play again restarting from
+    0 rather than resuming from the stopped position. Confirmed
+    empirically that Tracktion's own `stop()`/`freePlaybackContext()`
+    never reset transport position at all — the real cause was that
+    every Play used to spawn a brand new process and a brand new `Edit`
+    (starting at 0 by construction). The fix keeps one process/session
+    alive for the whole connection and has `native_runtime.cpp`'s own
+    `Play` handling explicitly seek the freshly-rebuilt Edit back to the
+    position the matching `Stop` captured.
+    """
+
+    async def _scenario() -> None:
+        stdout = _CapturingStdout()
+        original_stdout = sys.stdout
+        original_stdin = sys.stdin
+        sys.stdout = stdout
+        sys.stdin = _FakeStdin()
+        try:
+            server_task = asyncio.create_task(serve_desktop_channel())
+
+            port, secret = await asyncio.wait_for(_read_handshake(stdout), timeout=5)
+
+            reader, writer = await asyncio.open_connection("127.0.0.1", port)
+            write_frame(writer, secret.encode("utf-8"))
+            await writer.drain()
+
+            created = await _exchange(
+                writer,
+                reader,
+                Command(create_project=CreateProjectCommand(schema_version=1)),
+            )
+            project_id = created.project_created.project_id
+
+            track_added = await _exchange(
+                writer,
+                reader,
+                Command(add_track=AddAudioTrackCommand(schema_version=1)),
+            )
+            track_id = track_added.track_added.track_id
+
+            clip_added = await _exchange(
+                writer,
+                reader,
+                Command(
+                    add_clip=AddAudioClipCommand(
+                        schema_version=1, track_id=track_id, duration_seconds=3.0
+                    )
+                ),
+            )
+
+            project = ProjectMessage(
+                schema_version=1,
+                id=project_id,
+                tracks=[
+                    AudioTrackMessage(
+                        schema_version=1,
+                        id=track_id,
+                        clips=[
+                            AudioClipMessage(
+                                schema_version=1,
+                                id=clip_added.clip_added.clip_id,
+                                start_seconds=clip_added.clip_added.start_seconds,
+                                duration_seconds=clip_added.clip_added.duration_seconds,
+                            )
+                        ],
+                    )
+                ],
+            )
+            play_command = Command(play=PlayCommand(schema_version=1, project=project))
+
+            first_started = await _exchange(writer, reader, play_command)
+
+            if not first_started.playback_started.device_opened:
+                writer.close()
+                await writer.wait_closed()
+                await asyncio.wait_for(server_task, timeout=5)
+                pytest.skip("no real audio output device available in this environment")
+
+            await asyncio.sleep(0.6)
+
+            stopped = await _exchange(
+                writer, reader, Command(stop=StopCommand(schema_version=1))
+            )
+            stopped_position = stopped.playback_stopped.final_position_seconds
+            assert 0.3 < stopped_position < 2.5, (
+                f"expected to stop somewhere mid-clip, got {stopped_position}"
+            )
+
+            resumed = await _exchange(writer, reader, play_command)
+            assert resumed.playback_started.device_opened is True
+
+            position_after_resume = await _exchange(
+                writer,
+                reader,
+                Command(
+                    get_playback_position=GetPlaybackPositionCommand(schema_version=1)
+                ),
+            )
+            assert (
+                position_after_resume.playback_position.position_seconds
+                >= stopped_position - 0.1
+            ), (
+                f"expected resume near {stopped_position:.3f}s, got "
+                f"{position_after_resume.playback_position.position_seconds:.3f}s "
+                f"-- looks reset to 0 instead of resumed"
+            )
+
+            await _exchange(writer, reader, Command(stop=StopCommand(schema_version=1)))
 
             writer.close()
             await writer.wait_closed()

@@ -15,18 +15,33 @@ using namespace tracktion;
 using corytm::native_runtime::buildEdit;
 using corytm::native_runtime::decodeCommand;
 using corytm::native_runtime::encodeClipMovedEvent;
+using corytm::native_runtime::encodeDevicePreparedEvent;
+using corytm::native_runtime::encodePlaybackPositionEvent;
+using corytm::native_runtime::encodePlaybackStartedEvent;
+using corytm::native_runtime::encodePlaybackStoppedEvent;
 using corytm::native_runtime::encodeProjectRenderedEvent;
+using corytm::native_runtime::getEditEndSeconds;
+using corytm::native_runtime::getPlaybackPositionSeconds;
+using corytm::native_runtime::isPlaying;
 using corytm::native_runtime::moveClip;
 using corytm::native_runtime::MoveClipSpec;
+using corytm::native_runtime::GetPlaybackPositionSpec;
+using corytm::native_runtime::openRealtimeOutputDevice;
+using corytm::native_runtime::PlaySpec;
+using corytm::native_runtime::PrepareDeviceSpec;
 using corytm::native_runtime::ProjectSpec;
 using corytm::native_runtime::renderEdit;
 using corytm::native_runtime::RenderResult;
+using corytm::native_runtime::startPlayback;
+using corytm::native_runtime::StopSpec;
+using corytm::native_runtime::stopPlayback;
 
 namespace
 {
     constexpr juce::uint32 transportMagicNumber = 0x636f7274;
     constexpr int connectTimeoutMs = 5000;
     constexpr int commandTimeoutMs = 5000;
+    constexpr int playbackPollSliceMs = 10;
 
     struct HeadlessUIBehaviour : public UIBehaviour
     {
@@ -124,6 +139,53 @@ namespace
         bool commandReceived = false;
         bool connectionWasLost = false;
     };
+
+    // While real-time playback is active, `TransportControl`'s queryable
+    // position is only kept current by periodic JUCE message-thread
+    // service — confirmed empirically: with the plain, unpumped
+    // `waitForCommand` wait below, `isPlaying()` correctly reports
+    // `true` but `getPlaybackPositionSeconds()` stays frozen at its
+    // starting value even seconds later, because real-time device audio
+    // itself runs on its own audio-callback thread, independent of the
+    // message thread. So the wait for the next command must become a
+    // short poll-and-pump loop for as long as a live Edit is playing,
+    // instead of the single long blocking wait used everywhere else,
+    // which would starve position tracking for the whole wait. This is
+    // also the authoritative layer for Corytm's own effective-end-of-
+    // content stop (see the in-loop check below): Tracktion's transport
+    // does not stop itself once an Edit's content ends — confirmed
+    // empirically, it keeps running past the end producing silence
+    // until told to stop — so relying on it alone would never satisfy
+    // Corytm's own product contract.
+    bool waitForNextCommand (NativeRuntimeConnection& connection, Edit* liveEdit, std::vector<std::byte>& commandBytesOut)
+    {
+        // Re-checks `isPlaying()` on every iteration, not just once at
+        // entry: playback can end (reaching its effective end, below)
+        // while this loop is waiting, and must fall through to the
+        // plain long wait once it does — otherwise this would poll-and-
+        // pump indefinitely against an Edit that already stopped, for
+        // as long as no further command happens to arrive.
+        while (liveEdit != nullptr && isPlaying (*liveEdit))
+        {
+            if (connection.waitForCommand (playbackPollSliceMs, commandBytesOut))
+                return true;
+
+            if (connection.wasConnectionLost())
+                return false;
+
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (playbackPollSliceMs);
+
+            const double editEndSeconds = getEditEndSeconds (*liveEdit);
+
+            if (editEndSeconds > 0.0 && getPlaybackPositionSeconds (*liveEdit) >= editEndSeconds)
+            {
+                stopPlayback (*liveEdit);
+                break;
+            }
+        }
+
+        return connection.waitForCommand (commandTimeoutMs, commandBytesOut);
+    }
 }
 
 int main (int argc, char* argv[])
@@ -153,10 +215,19 @@ int main (int argc, char* argv[])
 
     std::unique_ptr<Edit> liveEdit;
     std::string liveProjectId;
+    // The position Stop last captured, consumed (and reset) by the next
+    // Play against the same project id so it resumes from there rather
+    // than restarting at 0 — Play always rebuilds the Edit fresh (so it
+    // reflects any content changes made while stopped), so this is
+    // carried explicitly rather than relying on an old Edit surviving.
+    // Left at 0 after an effective-end auto-stop (see
+    // `waitForNextCommand`), since resuming "from the end" would just
+    // immediately re-trigger it.
+    double lastStoppedPositionSeconds = 0.0;
     bool sessionSucceeded = true;
     std::vector<std::byte> commandBytes;
 
-    while (connection.waitForCommand (commandTimeoutMs, commandBytes))
+    while (waitForNextCommand (connection, liveEdit.get(), commandBytes))
     {
         const auto decoded = decodeCommand (commandBytes);
 
@@ -188,6 +259,49 @@ int main (int argc, char* argv[])
             }
 
             connection.sendEvent (encodeClipMovedEvent (move->projectId, move->trackId, move->clipId, move->newStartSeconds, moved, renderResult));
+        }
+        else if (const auto* play = std::get_if<PlaySpec> (&*decoded))
+        {
+            const bool resumingSameProject = (liveProjectId == play->project.id) && lastStoppedPositionSeconds > 0.0;
+            const double resumePositionSeconds = lastStoppedPositionSeconds;
+            lastStoppedPositionSeconds = 0.0;
+
+            liveProjectId = play->project.id;
+            liveEdit = buildEdit (engine, play->project, Edit::EditRole::forEditing);
+
+            if (resumingSameProject)
+                liveEdit->getTransport().setPosition (TimePosition::fromSeconds (resumePositionSeconds));
+
+            const bool deviceOpened = openRealtimeOutputDevice (engine);
+
+            if (deviceOpened)
+                startPlayback (*liveEdit);
+
+            connection.sendEvent (encodePlaybackStartedEvent (liveProjectId, deviceOpened));
+        }
+        else if (std::get_if<GetPlaybackPositionSpec> (&*decoded) != nullptr)
+        {
+            const bool playing = liveEdit != nullptr && isPlaying (*liveEdit);
+            const double position = liveEdit != nullptr ? getPlaybackPositionSeconds (*liveEdit) : 0.0;
+
+            connection.sendEvent (encodePlaybackPositionEvent (playing, position));
+        }
+        else if (std::get_if<StopSpec> (&*decoded) != nullptr)
+        {
+            const double finalPosition = liveEdit != nullptr ? getPlaybackPositionSeconds (*liveEdit) : 0.0;
+
+            if (liveEdit != nullptr)
+                stopPlayback (*liveEdit);
+
+            lastStoppedPositionSeconds = finalPosition;
+
+            connection.sendEvent (encodePlaybackStoppedEvent (liveProjectId, finalPosition));
+        }
+        else if (std::get_if<PrepareDeviceSpec> (&*decoded) != nullptr)
+        {
+            const bool deviceOpened = openRealtimeOutputDevice (engine);
+
+            connection.sendEvent (encodeDevicePreparedEvent (deviceOpened));
         }
     }
 

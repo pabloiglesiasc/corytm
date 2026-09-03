@@ -5,6 +5,7 @@ from corytm.runtime.projection import (
     SCHEMA_VERSION,
     to_materialize_command,
     to_move_clip_command,
+    to_play_command,
 )
 
 
@@ -43,6 +44,19 @@ def test_projects_tracks_and_clips_in_order() -> None:
     assert second_clip_message.id == "clip-b"
     assert second_clip_message.start_seconds == 1.5
     assert second_clip_message.duration_seconds == 2.0
+
+
+def test_projects_a_play_command() -> None:
+    clip = AudioClip(id="clip-1", start_seconds=0.0, duration_seconds=2.0)
+    track = AudioTrack(id="track-1", clips=(clip,))
+    project = Project(id="project-1", tracks=(track,))
+
+    command = to_play_command(project)
+
+    assert command.schema_version == SCHEMA_VERSION
+    assert command.project.id == "project-1"
+    assert len(command.project.tracks) == 1
+    assert command.project.tracks[0].clips[0].id == "clip-1"
 
 
 def test_projects_a_move_clip_command() -> None:

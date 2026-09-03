@@ -6,7 +6,11 @@ using corytm::schemas::project::AudioClip;
 using corytm::schemas::project::AudioTrack;
 using corytm::schemas::project::ClipMovedEvent;
 using corytm::schemas::project::Command;
+using corytm::schemas::project::DevicePreparedEvent;
 using corytm::schemas::project::Event;
+using corytm::schemas::project::PlaybackPositionEvent;
+using corytm::schemas::project::PlaybackStartedEvent;
+using corytm::schemas::project::PlaybackStoppedEvent;
 using corytm::schemas::project::ProjectRenderedEvent;
 
 namespace corytm::native_runtime
@@ -57,6 +61,18 @@ namespace corytm::native_runtime
             return DecodedCommand { MoveClipSpec { moveClip.project_id(), moveClip.track_id(), moveClip.clip_id(), moveClip.new_start_seconds() } };
         }
 
+        if (command.has_play())
+            return DecodedCommand { PlaySpec { toProjectSpec (command.play().project()) } };
+
+        if (command.has_stop())
+            return DecodedCommand { StopSpec {} };
+
+        if (command.has_get_playback_position())
+            return DecodedCommand { GetPlaybackPositionSpec {} };
+
+        if (command.has_prepare_device())
+            return DecodedCommand { PrepareDeviceSpec {} };
+
         return std::nullopt;
     }
 
@@ -91,6 +107,57 @@ namespace corytm::native_runtime
 
         Event event;
         *event.mutable_clip_moved() = std::move (clipMovedEvent);
+
+        return toBytes (event.SerializeAsString());
+    }
+
+    std::vector<std::byte> encodePlaybackStartedEvent (const std::string& projectId, bool deviceOpened)
+    {
+        PlaybackStartedEvent startedEvent;
+        startedEvent.set_schema_version (1);
+        startedEvent.set_project_id (projectId);
+        startedEvent.set_device_opened (deviceOpened);
+
+        Event event;
+        *event.mutable_playback_started() = std::move (startedEvent);
+
+        return toBytes (event.SerializeAsString());
+    }
+
+    std::vector<std::byte> encodePlaybackStoppedEvent (const std::string& projectId, double finalPositionSeconds)
+    {
+        PlaybackStoppedEvent stoppedEvent;
+        stoppedEvent.set_schema_version (1);
+        stoppedEvent.set_project_id (projectId);
+        stoppedEvent.set_final_position_seconds (finalPositionSeconds);
+
+        Event event;
+        *event.mutable_playback_stopped() = std::move (stoppedEvent);
+
+        return toBytes (event.SerializeAsString());
+    }
+
+    std::vector<std::byte> encodePlaybackPositionEvent (bool isPlaying, double positionSeconds)
+    {
+        PlaybackPositionEvent positionEvent;
+        positionEvent.set_schema_version (1);
+        positionEvent.set_is_playing (isPlaying);
+        positionEvent.set_position_seconds (positionSeconds);
+
+        Event event;
+        *event.mutable_playback_position() = std::move (positionEvent);
+
+        return toBytes (event.SerializeAsString());
+    }
+
+    std::vector<std::byte> encodeDevicePreparedEvent (bool deviceOpened)
+    {
+        DevicePreparedEvent preparedEvent;
+        preparedEvent.set_schema_version (1);
+        preparedEvent.set_device_opened (deviceOpened);
+
+        Event event;
+        *event.mutable_device_prepared() = std::move (preparedEvent);
 
         return toBytes (event.SerializeAsString());
     }

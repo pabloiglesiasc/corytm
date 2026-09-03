@@ -341,6 +341,92 @@ async fn add_clip(
   })
 }
 
+/// A `PlaybackStartedEvent`'s fields, reshaped for JSON serialization
+/// back to the frontend.
+#[derive(serde::Serialize)]
+struct PlaybackStartedResult {
+  device_opened: bool,
+}
+
+/// Start real-time playback of the session's current project.
+#[tauri::command]
+async fn play(
+  state: tauri::State<'_, DesktopConnection>,
+) -> Result<PlaybackStartedResult, String> {
+  let command = project_proto::Command {
+    command: Some(project_proto::command::Command::Play(
+      project_proto::PlayCommand {
+        schema_version: 1,
+        project: None,
+      },
+    )),
+  };
+  let event = send_command(&state, command).await?;
+  let Some(project_proto::event::Event::PlaybackStarted(event)) = event.event else {
+    return Err("expected a playback-started event".to_string());
+  };
+
+  Ok(PlaybackStartedResult {
+    device_opened: event.device_opened,
+  })
+}
+
+/// A `PlaybackPositionEvent`'s fields, reshaped for JSON serialization
+/// back to the frontend.
+#[derive(serde::Serialize)]
+struct PlaybackPositionResult {
+  is_playing: bool,
+  position_seconds: f64,
+}
+
+/// Query the current live playback position.
+#[tauri::command]
+async fn get_playback_position(
+  state: tauri::State<'_, DesktopConnection>,
+) -> Result<PlaybackPositionResult, String> {
+  let command = project_proto::Command {
+    command: Some(project_proto::command::Command::GetPlaybackPosition(
+      project_proto::GetPlaybackPositionCommand { schema_version: 1 },
+    )),
+  };
+  let event = send_command(&state, command).await?;
+  let Some(project_proto::event::Event::PlaybackPosition(event)) = event.event else {
+    return Err("expected a playback-position event".to_string());
+  };
+
+  Ok(PlaybackPositionResult {
+    is_playing: event.is_playing,
+    position_seconds: event.position_seconds,
+  })
+}
+
+/// A `PlaybackStoppedEvent`'s fields, reshaped for JSON serialization
+/// back to the frontend.
+#[derive(serde::Serialize)]
+struct PlaybackStoppedResult {
+  final_position_seconds: f64,
+}
+
+/// Stop real-time playback of the session's current project.
+#[tauri::command]
+async fn stop(
+  state: tauri::State<'_, DesktopConnection>,
+) -> Result<PlaybackStoppedResult, String> {
+  let command = project_proto::Command {
+    command: Some(project_proto::command::Command::Stop(
+      project_proto::StopCommand { schema_version: 1 },
+    )),
+  };
+  let event = send_command(&state, command).await?;
+  let Some(project_proto::event::Event::PlaybackStopped(event)) = event.event else {
+    return Err("expected a playback-stopped event".to_string());
+  };
+
+  Ok(PlaybackStoppedResult {
+    final_position_seconds: event.final_position_seconds,
+  })
+}
+
 async fn spawn_desktop_sidecar<R: tauri::Runtime>(
   app: &tauri::AppHandle<R>,
 ) -> Result<(Receiver<CommandEvent>, CommandChild, u16, String), String> {
@@ -418,6 +504,9 @@ pub fn run() {
       open_project,
       add_track,
       add_clip,
+      play,
+      stop,
+      get_playback_position,
       desktop_channel_ready
     ])
     .setup(|app| {
@@ -574,7 +663,8 @@ mod desktop_channel_tests {
 
   use crate::{
     add_clip, add_track, connect_desktop_channel, create_project, desktop_channel_ready,
-    move_clip, open_project, save_project, spawn_desktop_sidecar, DesktopConnection,
+    get_playback_position, move_clip, open_project, play, save_project, spawn_desktop_sidecar,
+    stop, DesktopConnection,
   };
 
   /// Kills the wrapped sidecar on drop unless [`Self::disarm`] already
@@ -898,6 +988,110 @@ mod desktop_channel_tests {
     sidecar.disarm();
   }
 
+  /// Drives Play -> GetPlaybackPosition -> Stop over one held
+  /// connection. Tolerates a test environment with no real audio
+  /// output device (`device_opened == false`) rather than failing on
+  /// it — mirroring the Python integration test's own precedent
+  /// (`test_play_reports_advancing_position_and_stop_halts_it`) and
+  /// `playback_proof`'s original soft-skip design.
+  #[tokio::test]
+  async fn play_reports_advancing_position_and_stop_halts_it() {
+    let app = mock_builder()
+      .plugin(tauri_plugin_shell::init())
+      .build(mock_context(noop_assets()))
+      .expect("failed to build mock app");
+
+    app.manage(DesktopConnection::new(None));
+
+    let (mut receiver, child, port, secret) = tokio::time::timeout(
+      Duration::from_secs(10),
+      spawn_desktop_sidecar(app.handle()),
+    )
+    .await
+    .expect("timed out waiting for the desktop channel handshake")
+    .expect("failed to spawn corytm serve and complete its handshake");
+    let mut sidecar = SidecarGuard(Some(child));
+
+    let stream = connect_desktop_channel(port, &secret)
+      .await
+      .expect("failed to connect to the desktop channel");
+    *app.state::<DesktopConnection>().lock().await = Some(stream);
+
+    tokio::time::timeout(Duration::from_secs(30), create_project(app.state()))
+      .await
+      .expect("timed out waiting for create_project")
+      .expect("create_project failed");
+
+    let track_added = tokio::time::timeout(Duration::from_secs(30), add_track(app.state()))
+      .await
+      .expect("timed out waiting for add_track")
+      .expect("add_track failed");
+
+    tokio::time::timeout(
+      Duration::from_secs(60),
+      add_clip(app.state(), track_added.track_id, 3.0),
+    )
+    .await
+    .expect("timed out waiting for add_clip")
+    .expect("add_clip failed");
+
+    let started = tokio::time::timeout(Duration::from_secs(30), play(app.state()))
+      .await
+      .expect("timed out waiting for play")
+      .expect("play failed");
+
+    if started.device_opened {
+      let first_position = tokio::time::timeout(
+        Duration::from_secs(30),
+        get_playback_position(app.state()),
+      )
+      .await
+      .expect("timed out waiting for get_playback_position")
+      .expect("get_playback_position failed");
+      assert!(first_position.is_playing);
+
+      tokio::time::sleep(Duration::from_millis(300)).await;
+
+      let second_position = tokio::time::timeout(
+        Duration::from_secs(30),
+        get_playback_position(app.state()),
+      )
+      .await
+      .expect("timed out waiting for the second get_playback_position")
+      .expect("second get_playback_position failed");
+      assert!(second_position.is_playing);
+      assert!(
+        second_position.position_seconds > first_position.position_seconds,
+        "expected playback position to genuinely advance"
+      );
+    }
+
+    tokio::time::timeout(Duration::from_secs(30), stop(app.state()))
+      .await
+      .expect("timed out waiting for stop")
+      .expect("stop failed");
+
+    app.state::<DesktopConnection>().lock().await.take();
+
+    sidecar
+      .write(b"SHUTDOWN\n")
+      .expect("failed to write SHUTDOWN");
+
+    loop {
+      let event = tokio::time::timeout(Duration::from_secs(10), receiver.recv())
+        .await
+        .expect("timed out waiting for the sidecar to terminate")
+        .expect("sidecar event channel closed before terminating");
+
+      if let CommandEvent::Terminated(payload) = event {
+        assert_eq!(payload.code, Some(0));
+        break;
+      }
+    }
+
+    sidecar.disarm();
+  }
+
   /// A minimal, real IPC invoke request for `cmd`, matching the shape
   /// the frontend's own `invoke()` sends over the actual `postMessage`
   /// pipeline this test drives through — not a direct Rust function
@@ -960,6 +1154,9 @@ mod desktop_channel_tests {
         open_project,
         add_track,
         add_clip,
+        play,
+        stop,
+        get_playback_position,
         desktop_channel_ready
       ])
       .build(tauri::generate_context!())
@@ -1055,6 +1252,18 @@ mod desktop_channel_tests {
     assert!(
       clip_response.is_ok(),
       "expected add_clip to be permitted by capabilities/default.json, got {clip_response:?}"
+    );
+
+    let play_response = get_ipc_response(&webview, invoke_request("play", json!({})));
+    assert!(
+      play_response.is_ok(),
+      "expected play to be permitted by capabilities/default.json, got {play_response:?}"
+    );
+
+    let stop_response = get_ipc_response(&webview, invoke_request("stop", json!({})));
+    assert!(
+      stop_response.is_ok(),
+      "expected stop to be permitted by capabilities/default.json, got {stop_response:?}"
     );
 
     app.state::<DesktopConnection>().lock().await.take();

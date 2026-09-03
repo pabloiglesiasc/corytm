@@ -91,13 +91,20 @@ namespace corytm::native_runtime
         return false;
     }
 
-    RenderResult renderEdit (Engine& engine, Edit& edit, const std::string& projectId, const juce::File& outputDirectory)
+    double getEditEndSeconds (Edit& edit)
     {
         double editEndSeconds = 0.0;
 
         for (AudioTrack* track : getAudioTracks (edit))
             for (Clip* clip : track->getClips())
                 editEndSeconds = juce::jmax (editEndSeconds, clip->getPosition().getEnd().inSeconds());
+
+        return editEndSeconds;
+    }
+
+    RenderResult renderEdit (Engine& engine, Edit& edit, const std::string& projectId, const juce::File& outputDirectory)
+    {
+        const double editEndSeconds = getEditEndSeconds (edit);
 
         if (editEndSeconds <= 0.0)
             return { false, {}, 0, 0.0 };
@@ -156,9 +163,25 @@ namespace corytm::native_runtime
 
     bool openRealtimeOutputDevice (Engine& engine)
     {
+        DeviceManager& deviceManager = engine.getDeviceManager();
+
+        // Idempotent: an already-open, already-settled device manager
+        // needs no further work. Measured empirically (FT-030's Play-
+        // latency investigation): on macOS, the settle wait below
+        // routinely takes 4-5 real seconds — not because the MIDI scan
+        // itself is slow (it consistently completes in under a second
+        // once started), but because CoreMIDI's own client setup has a
+        // real, well-documented several-second cold-start cost the
+        // first time a fresh process touches it. Short-circuiting here
+        // is what makes calling this function twice (once to warm up
+        // ahead of Play, once defensively inside Play itself) cheap
+        // rather than double-paying that cost.
+        if (deviceManager.deviceManager.getCurrentAudioDevice() != nullptr
+            && deviceManager.getNumWaveOutDevices() > 0 && deviceManager.getNumMidiInDevices() > 0)
+            return true;
+
         constexpr int deviceSettleTimeoutMs = 5000;
 
-        DeviceManager& deviceManager = engine.getDeviceManager();
         deviceManager.initialise (0, 2);
 
         if (deviceManager.deviceManager.getCurrentAudioDevice() == nullptr)
@@ -171,10 +194,8 @@ namespace corytm::native_runtime
         // one settles races it: an already-live EditPlaybackContext's device list gets cleared
         // and reloaded out from under it (DeviceManager::clearAllContextDevices()/
         // reloadAllContextDevices(), called from both DeviceManager::handleAsyncUpdate() and
-        // DeviceManager::applyNewMidiDeviceList()), which stops the transport. The wave rebuild
-        // is usually near-instant; the MIDI scan alone was observed taking anywhere from ~10ms
-        // to ~600ms on real hardware. Wait for both here so every caller of this function gets
-        // an already-settled device manager.
+        // DeviceManager::applyNewMidiDeviceList()), which stops the transport. Wait for both
+        // here so every caller of this function gets an already-settled device manager.
         const juce::uint32 deadline = juce::Time::getMillisecondCounter() + (juce::uint32) deviceSettleTimeoutMs;
 
         while ((deviceManager.getNumWaveOutDevices() == 0 || deviceManager.getNumMidiInDevices() == 0)

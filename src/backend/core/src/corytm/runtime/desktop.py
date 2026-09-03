@@ -17,6 +17,7 @@ reference per ADR-010 rather than a new Desktop-owned envelope.
 """
 
 import asyncio
+import contextlib
 import secrets
 import sys
 import tempfile
@@ -37,7 +38,12 @@ from corytm.generated.project_pb2 import (
     ProjectSavedEvent,
 )
 
-from .session import add_clip_in_session, materialize_project, move_clip_in_session
+from .session import (
+    PlaybackSession,
+    add_clip_in_session,
+    materialize_project,
+    move_clip_in_session,
+)
 from .transport import read_frame, write_frame
 
 _AUTHENTICATION_TIMEOUT_SECONDS = 5
@@ -51,7 +57,11 @@ def _build_desktop_fixture_project() -> Project:
 
 
 async def _dispatch_command(
-    command: Command, current_project: Project, output_directory: Path
+    command: Command,
+    current_project: Project,
+    playback_session: PlaybackSession,
+    device_warm_up_task: asyncio.Task[bool],
+    output_directory: Path,
 ) -> tuple[Event, Project]:
     """Apply one `Command` against `current_project` and return its `Event`.
 
@@ -61,6 +71,15 @@ async def _dispatch_command(
             always seeds this with the hardcoded fixture, so a
             connection that only ever sends `MoveClipCommand` behaves
             exactly as before this dispatcher existed.
+        playback_session: The session's single, connection-lifetime
+            playback process, spawned eagerly by `_run_session`.
+        device_warm_up_task: The playback session's own backgrounded
+            device-open call — every playback command awaits this
+            first (a no-op once it has already completed, which real
+            usage gives plenty of time to do before Play is first
+            clicked) since it reads/writes the same connection
+            `playback_session`'s own commands do, and only one read
+            can be in flight on it at a time.
         output_directory: Directory the native process should write
             its rendered output into, for any command that renders.
 
@@ -172,6 +191,21 @@ async def _dispatch_command(
         )
         return Event(clip_moved=clip_moved_event), new_project
 
+    if which == "play":
+        await device_warm_up_task
+        started_event = await playback_session.play(current_project)
+        return Event(playback_started=started_event), current_project
+
+    if which == "get_playback_position":
+        await device_warm_up_task
+        position_event = await playback_session.get_position()
+        return Event(playback_position=position_event), current_project
+
+    if which == "stop":
+        await device_warm_up_task
+        stopped_event = await playback_session.stop()
+        return Event(playback_stopped=stopped_event), current_project
+
     raise ValueError(f"unsupported Desktop channel command: {which!r}")
 
 
@@ -180,16 +214,28 @@ async def _run_session(
 ) -> None:
     """Dispatch `Command` frames from `reader` until the client disconnects.
 
-    Holds one in-memory "current project" slot across the whole
-    connection, seeded with the existing hardcoded fixture so a
+    Holds one in-memory "current project" slot, and one connection-
+    lifetime `PlaybackSession`, across the whole connection — the
+    project slot seeded with the existing hardcoded fixture so a
     connection that only ever sends `MoveClipCommand` behaves exactly
-    as before this session loop existed.
+    as before this session loop existed. The playback session is
+    spawned here, before the first command is even read, and its own
+    device-open is kicked off as a backgrounded task right away: real
+    usage (creating/opening a project, adding a track and clip) gives
+    its real several-second cost plenty of time to finish before the
+    user ever clicks Play; a Play arriving before it finishes simply
+    awaits it rather than erroring. Spawning the process itself is
+    deliberately not backgrounded (`PlaybackSession.spawn` is fast) so
+    a real process handle is always available immediately to kill on
+    disconnect, without ever having to wait out the slow device-open —
+    only the backgrounded warm-up task itself needs cancelling first.
 
     The read below deliberately has no timeout: this channel is
     genuinely persistent for the app's whole session (ADR-010), so an
     arbitrarily long gap between human-triggered commands is normal,
     not a failure — only the client actually closing the connection
-    (`IncompleteReadError`, on EOF) ends the session.
+    (`IncompleteReadError`, on EOF) ends the session, at which point the
+    playback session is killed rather than left to leak.
 
     Args:
         reader: The authenticated client connection to read commands
@@ -199,22 +245,36 @@ async def _run_session(
     """
     current_project: Project = _build_desktop_fixture_project()
 
-    while True:
-        try:
-            command_bytes = await read_frame(reader)
-        except asyncio.IncompleteReadError:
-            return
+    with tempfile.TemporaryDirectory() as playback_output_directory:
+        playback_session = await PlaybackSession.spawn(Path(playback_output_directory))
+        device_warm_up_task: asyncio.Task[bool] = asyncio.create_task(
+            playback_session.prepare_device()
+        )
 
-        command = Command()
-        command.ParseFromString(command_bytes)
+        while True:
+            try:
+                command_bytes = await read_frame(reader)
+            except asyncio.IncompleteReadError:
+                device_warm_up_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await device_warm_up_task
+                await playback_session.kill()
+                return
 
-        with tempfile.TemporaryDirectory() as output_directory:
-            event, current_project = await _dispatch_command(
-                command, current_project, Path(output_directory)
-            )
+            command = Command()
+            command.ParseFromString(command_bytes)
 
-        write_frame(writer, event.SerializeToString())
-        await writer.drain()
+            with tempfile.TemporaryDirectory() as output_directory:
+                event, current_project = await _dispatch_command(
+                    command,
+                    current_project,
+                    playback_session,
+                    device_warm_up_task,
+                    Path(output_directory),
+                )
+
+            write_frame(writer, event.SerializeToString())
+            await writer.drain()
 
 
 async def serve_desktop_channel() -> None:

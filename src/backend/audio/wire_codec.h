@@ -18,7 +18,24 @@ namespace corytm::native_runtime
         double newStartSeconds;
     };
 
-    using DecodedCommand = std::variant<ProjectSpec, MoveClipSpec>;
+    struct PlaySpec
+    {
+        ProjectSpec project;
+    };
+
+    struct StopSpec
+    {
+    };
+
+    struct GetPlaybackPositionSpec
+    {
+    };
+
+    struct PrepareDeviceSpec
+    {
+    };
+
+    using DecodedCommand = std::variant<ProjectSpec, MoveClipSpec, PlaySpec, StopSpec, GetPlaybackPositionSpec, PrepareDeviceSpec>;
 
     std::optional<DecodedCommand> decodeCommand (const std::vector<std::byte>& commandBytes);
 
@@ -26,4 +43,12 @@ namespace corytm::native_runtime
 
     std::vector<std::byte> encodeClipMovedEvent (const std::string& projectId, const std::string& trackId, const std::string& clipId,
                                                   double newStartSeconds, bool moved, const RenderResult& renderResult);
+
+    std::vector<std::byte> encodePlaybackStartedEvent (const std::string& projectId, bool deviceOpened);
+
+    std::vector<std::byte> encodePlaybackStoppedEvent (const std::string& projectId, double finalPositionSeconds);
+
+    std::vector<std::byte> encodePlaybackPositionEvent (bool isPlaying, double positionSeconds);
+
+    std::vector<std::byte> encodeDevicePreparedEvent (bool deviceOpened);
 }

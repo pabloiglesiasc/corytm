@@ -20,10 +20,16 @@ from corytm.generated.project_pb2 import (
     ClipMovedEvent,
     Command,
     Event,
+    GetPlaybackPositionCommand,
+    PlaybackPositionEvent,
+    PlaybackStartedEvent,
+    PlaybackStoppedEvent,
+    PrepareDeviceCommand,
     ProjectRenderedEvent,
+    StopCommand,
 )
 
-from .projection import to_materialize_command, to_move_clip_command
+from .projection import to_materialize_command, to_move_clip_command, to_play_command
 from .transport import read_frame, write_frame
 
 _CONNECT_TIMEOUT_SECONDS = 5
@@ -51,6 +57,76 @@ def native_runtime_executable() -> Path:
         return build_dir / "Release" / "native_runtime.exe"
 
     return build_dir / "native_runtime"
+
+
+class _NativeRuntimeProcess(NamedTuple):
+    """One spawned, authenticated `native_runtime` process and its transport."""
+
+    process: asyncio.subprocess.Process
+    server: asyncio.AbstractServer
+    reader: asyncio.StreamReader
+    writer: asyncio.StreamWriter
+
+
+async def _spawn_and_authenticate(output_directory: Path) -> _NativeRuntimeProcess:
+    """Spawn `native_runtime` and complete its connection handshake.
+
+    Shared by `_connected_native_runtime` (a one-shot session, closed by
+    its caller before returning) and `PlaybackSession` (held open across
+    multiple, separately-arriving Desktop-channel commands) — both need
+    the identical spawn/listen/accept/authenticate sequence, only their
+    teardown timing differs.
+
+    Args:
+        output_directory: Directory the native process should write its
+            rendered output into.
+
+    Returns:
+        The spawned process, its listening server, and the connected,
+        authenticated stream reader/writer pair.
+
+    Raises:
+        FileNotFoundError: `native_runtime_executable()` doesn't exist —
+            the native build hasn't been run.
+        RuntimeError: The spawned process failed to authenticate.
+        TimeoutError: The connection or handshake wasn't completed
+            within the configured timeout.
+    """
+    executable = native_runtime_executable()
+
+    if not executable.exists():
+        raise FileNotFoundError(f"native_runtime executable not found at {executable}")
+
+    secret = secrets.token_hex(16)
+    loop = asyncio.get_running_loop()
+    connection_future: asyncio.Future[
+        tuple[asyncio.StreamReader, asyncio.StreamWriter]
+    ] = loop.create_future()
+
+    async def handle_client(
+        reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> None:
+        connection_future.set_result((reader, writer))
+
+    server = await asyncio.start_server(handle_client, "127.0.0.1", 0)
+    assert server.sockets is not None
+    port = server.sockets[0].getsockname()[1]
+
+    process = await asyncio.create_subprocess_exec(
+        str(executable), str(port), secret, str(output_directory)
+    )
+
+    reader, writer = await asyncio.wait_for(
+        connection_future, timeout=_CONNECT_TIMEOUT_SECONDS
+    )
+
+    received_secret = await asyncio.wait_for(
+        read_frame(reader), timeout=_CONNECT_TIMEOUT_SECONDS
+    )
+    if received_secret.decode("utf-8") != secret:
+        raise RuntimeError("native_runtime failed to authenticate")
+
+    return _NativeRuntimeProcess(process, server, reader, writer)
 
 
 @asynccontextmanager
@@ -91,46 +167,14 @@ async def _connected_native_runtime(
             within the configured timeout, or the process didn't exit
             promptly once its connection closed.
     """
-    executable = native_runtime_executable()
+    process, server, reader, writer_ = await _spawn_and_authenticate(output_directory)
 
-    if not executable.exists():
-        raise FileNotFoundError(f"native_runtime executable not found at {executable}")
-
-    secret = secrets.token_hex(16)
-    loop = asyncio.get_running_loop()
-    connection_future: asyncio.Future[
-        tuple[asyncio.StreamReader, asyncio.StreamWriter]
-    ] = loop.create_future()
-
-    async def handle_client(
-        reader: asyncio.StreamReader, writer: asyncio.StreamWriter
-    ) -> None:
-        connection_future.set_result((reader, writer))
-
-    server = await asyncio.start_server(handle_client, "127.0.0.1", 0)
-    assert server.sockets is not None
-    port = server.sockets[0].getsockname()[1]
-
-    process = await asyncio.create_subprocess_exec(
-        str(executable), str(port), secret, str(output_directory)
-    )
-
-    writer: asyncio.StreamWriter | None = None
+    writer: asyncio.StreamWriter | None = writer_
     try:
-        reader, writer = await asyncio.wait_for(
-            connection_future, timeout=_CONNECT_TIMEOUT_SECONDS
-        )
+        yield reader, writer_
 
-        received_secret = await asyncio.wait_for(
-            read_frame(reader), timeout=_CONNECT_TIMEOUT_SECONDS
-        )
-        if received_secret.decode("utf-8") != secret:
-            raise RuntimeError("native_runtime failed to authenticate")
-
-        yield reader, writer
-
-        writer.close()
-        await writer.wait_closed()
+        writer_.close()
+        await writer_.wait_closed()
         writer = None
 
         await asyncio.wait_for(process.wait(), timeout=_EVENT_TIMEOUT_SECONDS)
@@ -152,6 +196,150 @@ async def _connected_native_runtime(
 
         server.close()
         await server.wait_closed()
+
+
+class PlaybackSession:
+    """Holds one live `native_runtime` playback process for a whole
+    Desktop-channel connection, across many Play/Stop cycles.
+
+    Unlike every other Desktop-channel command — each spawns a fresh
+    `native_runtime` process for exactly one command/response, via
+    `_connected_native_runtime` — real-time playback needs the same
+    open audio device to persist across Play, any number of position
+    polls, and Stop, and across repeated Play/Stop pairs, so that:
+    (1) the real audio-device open/settle cost (measured empirically at
+    several real seconds, dominated by the host OS's own first-touch
+    MIDI-client cold start rather than anything Corytm controls) is
+    paid once per connection via `open()`, ideally well before the user
+    ever clicks Play, rather than on every single click; and (2) Stop
+    followed by Play again resumes from the stopped position rather
+    than restarting, since `native_runtime`'s own resume logic (see
+    `native_runtime.cpp`'s `PlaySpec` handling) only has a stopped
+    position to resume from when it is the same long-lived process
+    that was told to stop. This class is the owner of that
+    connection-lifetime process.
+    """
+
+    def __init__(self, native_process: _NativeRuntimeProcess) -> None:
+        self._native_process = native_process
+
+    @staticmethod
+    async def spawn(output_directory: Path) -> PlaybackSession:
+        """Spawn `native_runtime` and authenticate — fast, no device-open.
+
+        Deliberately split from `prepare_device()` (the slow part): a
+        caller needs this to complete quickly and unconditionally so it
+        always has a real process handle to `kill()` if the Desktop-
+        channel connection closes before `prepare_device()`'s own,
+        much longer, device-open/settle wait finishes.
+
+        Args:
+            output_directory: Directory passed to the spawned process;
+                unused by the playback command path itself (it never
+                renders to a file), so its lifetime need not outlive
+                this call.
+
+        Returns:
+            The live session, with its device not yet opened.
+
+        Raises:
+            FileNotFoundError, RuntimeError, TimeoutError: propagated
+                unchanged from `_spawn_and_authenticate`.
+        """
+        native_process = await _spawn_and_authenticate(output_directory)
+        return PlaybackSession(native_process)
+
+    async def prepare_device(self) -> bool:
+        """Eagerly open the real audio device, before any Play arrives.
+
+        This is the slow part — measured empirically at several real
+        seconds, dominated by the host OS's own first-touch MIDI-client
+        cold start rather than anything Corytm controls — so callers
+        run it as a backgrounded task right after `spawn()`, ideally
+        finishing well before the user ever clicks Play, rather than
+        blocking on it directly.
+
+        Returns:
+            Whether a real audio device was genuinely opened (a real
+            "no device in this environment" condition is not an error
+            — `play()` retries opening it regardless).
+        """
+        await _send_command(
+            self._native_process.writer,
+            Command(prepare_device=PrepareDeviceCommand(schema_version=1)),
+        )
+        event = await _read_event(self._native_process.reader)
+        return event.device_prepared.device_opened
+
+    async def play(self, project: Project) -> PlaybackStartedEvent:
+        """Start real-time playback of `project` on this live session.
+
+        Args:
+            project: The canonical project to play.
+
+        Returns:
+            The `PlaybackStartedEvent` describing whether a real audio
+            device is open.
+        """
+        await _send_command(
+            self._native_process.writer, Command(play=to_play_command(project))
+        )
+        event = await _read_event(self._native_process.reader)
+        return event.playback_started
+
+    async def get_position(self) -> PlaybackPositionEvent:
+        """Query this session's current live playback position.
+
+        Returns:
+            The `PlaybackPositionEvent` describing whether playback is
+            still active and its current position.
+        """
+        await _send_command(
+            self._native_process.writer,
+            Command(get_playback_position=GetPlaybackPositionCommand(schema_version=1)),
+        )
+        event = await _read_event(self._native_process.reader)
+        return event.playback_position
+
+    async def stop(self) -> PlaybackStoppedEvent:
+        """Stop this session's live playback, keeping the process alive.
+
+        Unlike an earlier design, this does not tear the process down —
+        a live device stays open and ready so the next `play()` call is
+        cheap, and so a `play()` for the same project resumes from the
+        position this call captures rather than restarting at 0.
+
+        Returns:
+            The `PlaybackStoppedEvent` describing the final position
+            playback stopped at.
+        """
+        await _send_command(
+            self._native_process.writer, Command(stop=StopCommand(schema_version=1))
+        )
+        event = await _read_event(self._native_process.reader)
+        return event.playback_stopped
+
+    async def kill(self) -> None:
+        """Forcibly tear down this session's process.
+
+        Used when the owning Desktop-channel connection itself closes —
+        this session lives for the connection's whole lifetime, so this
+        is its only teardown path (there is no per-Play spawn/close
+        cycle to piggyback on any more).
+        """
+        if self._native_process.process.returncode is None:
+            self._native_process.process.kill()
+
+        self._native_process.writer.close()
+        await self._native_process.writer.wait_closed()
+
+        if self._native_process.process.returncode is None:
+            await asyncio.wait_for(
+                self._native_process.process.wait(), timeout=_EVENT_TIMEOUT_SECONDS
+            )
+
+        self._native_process.server.close()
+        await self._native_process.server.wait_closed()
 
 
 async def _send_command(writer: asyncio.StreamWriter, command: Command) -> None:

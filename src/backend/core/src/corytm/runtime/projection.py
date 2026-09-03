@@ -7,18 +7,50 @@ Native Audio Runtime consumes, per ADR-007's schema/transport split.
 from corytm.engine.project import Project
 from corytm.generated.project_pb2 import AudioClip as AudioClipMessage
 from corytm.generated.project_pb2 import AudioTrack as AudioTrackMessage
-from corytm.generated.project_pb2 import MaterializeProjectCommand, MoveClipCommand
+from corytm.generated.project_pb2 import (
+    MaterializeProjectCommand,
+    MoveClipCommand,
+    PlayCommand,
+)
 from corytm.generated.project_pb2 import Project as ProjectMessage
 
 SCHEMA_VERSION = 1
 
 
+def _to_project_message(project: Project) -> ProjectMessage:
+    """Recursively convert a canonical `Project` into its wire message.
+
+    Args:
+        project: The canonical Engine project to convert.
+
+    Returns:
+        The equivalent `ProjectMessage`, with every level stamped with
+        the current `SCHEMA_VERSION`.
+    """
+    return ProjectMessage(
+        schema_version=SCHEMA_VERSION,
+        id=project.id,
+        tracks=[
+            AudioTrackMessage(
+                schema_version=SCHEMA_VERSION,
+                id=track.id,
+                clips=[
+                    AudioClipMessage(
+                        schema_version=SCHEMA_VERSION,
+                        id=clip.id,
+                        start_seconds=clip.start_seconds,
+                        duration_seconds=clip.duration_seconds,
+                    )
+                    for clip in track.clips
+                ],
+            )
+            for track in project.tracks
+        ],
+    )
+
+
 def to_materialize_command(project: Project) -> MaterializeProjectCommand:
     """Project a canonical `Project` into a `MaterializeProjectCommand`.
-
-    Recursively converts the project and its tracks/clips into their
-    wire-message equivalents, stamping every level with the current
-    `SCHEMA_VERSION`.
 
     Args:
         project: The canonical Engine project to project.
@@ -28,27 +60,26 @@ def to_materialize_command(project: Project) -> MaterializeProjectCommand:
         the ADR-007 transport.
     """
     return MaterializeProjectCommand(
-        schema_version=SCHEMA_VERSION,
-        project=ProjectMessage(
-            schema_version=SCHEMA_VERSION,
-            id=project.id,
-            tracks=[
-                AudioTrackMessage(
-                    schema_version=SCHEMA_VERSION,
-                    id=track.id,
-                    clips=[
-                        AudioClipMessage(
-                            schema_version=SCHEMA_VERSION,
-                            id=clip.id,
-                            start_seconds=clip.start_seconds,
-                            duration_seconds=clip.duration_seconds,
-                        )
-                        for clip in track.clips
-                    ],
-                )
-                for track in project.tracks
-            ],
-        ),
+        schema_version=SCHEMA_VERSION, project=_to_project_message(project)
+    )
+
+
+def to_play_command(project: Project) -> PlayCommand:
+    """Project a canonical `Project` into a `PlayCommand`.
+
+    Unlike `to_materialize_command`, the resulting Edit is built for
+    real-time device playback rather than offline rendering — see
+    `native_runtime.cpp`'s `PlaySpec` handling.
+
+    Args:
+        project: The canonical Engine project to play.
+
+    Returns:
+        The equivalent `PlayCommand`, ready to send over the ADR-007
+        transport.
+    """
+    return PlayCommand(
+        schema_version=SCHEMA_VERSION, project=_to_project_message(project)
     )
 
 

@@ -14,6 +14,9 @@ fn main() {
         "open_project",
         "add_track",
         "add_clip",
+        "play",
+        "stop",
+        "get_playback_position",
         "desktop_channel_ready",
       ])),
   )

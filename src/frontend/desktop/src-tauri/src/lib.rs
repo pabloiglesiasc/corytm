@@ -1092,6 +1092,90 @@ mod desktop_channel_tests {
     sidecar.disarm();
   }
 
+  /// Drives the real `play` command over the real Desktop channel after
+  /// a real idle gap past the persistent playback process's own command
+  /// timeout, through the same vertical path (Desktop -> Rust ->
+  /// Desktop channel -> `corytm serve` sidecar) FT-030's own human
+  /// validation exercised. Mirrors the Python-level regression test of
+  /// the same name.
+  #[tokio::test]
+  async fn play_survives_a_real_human_idle_gap_before_it() {
+    let app = mock_builder()
+      .plugin(tauri_plugin_shell::init())
+      .build(mock_context(noop_assets()))
+      .expect("failed to build mock app");
+
+    app.manage(DesktopConnection::new(None));
+
+    let (mut receiver, child, port, secret) = tokio::time::timeout(
+      Duration::from_secs(10),
+      spawn_desktop_sidecar(app.handle()),
+    )
+    .await
+    .expect("timed out waiting for the desktop channel handshake")
+    .expect("failed to spawn corytm serve and complete its handshake");
+    let mut sidecar = SidecarGuard(Some(child));
+
+    let stream = connect_desktop_channel(port, &secret)
+      .await
+      .expect("failed to connect to the desktop channel");
+    *app.state::<DesktopConnection>().lock().await = Some(stream);
+
+    tokio::time::timeout(Duration::from_secs(30), create_project(app.state()))
+      .await
+      .expect("timed out waiting for create_project")
+      .expect("create_project failed");
+
+    let track_added = tokio::time::timeout(Duration::from_secs(30), add_track(app.state()))
+      .await
+      .expect("timed out waiting for add_track")
+      .expect("add_track failed");
+
+    tokio::time::timeout(
+      Duration::from_secs(60),
+      add_clip(app.state(), track_added.track_id, 2.0),
+    )
+    .await
+    .expect("timed out waiting for add_clip")
+    .expect("add_clip failed");
+
+    tokio::time::sleep(Duration::from_secs(13)).await;
+
+    tokio::time::timeout(Duration::from_secs(30), play(app.state()))
+      .await
+      .expect("timed out waiting for play")
+      .expect(
+        "play failed after a real idle gap -- the persistent playback \
+         process likely gave up and exited on its own, crashing the \
+         whole corytm serve process",
+      );
+
+    tokio::time::timeout(Duration::from_secs(30), stop(app.state()))
+      .await
+      .expect("timed out waiting for stop")
+      .expect("stop failed");
+
+    app.state::<DesktopConnection>().lock().await.take();
+
+    sidecar
+      .write(b"SHUTDOWN\n")
+      .expect("failed to write SHUTDOWN");
+
+    loop {
+      let event = tokio::time::timeout(Duration::from_secs(10), receiver.recv())
+        .await
+        .expect("timed out waiting for the sidecar to terminate")
+        .expect("sidecar event channel closed before terminating");
+
+      if let CommandEvent::Terminated(payload) = event {
+        assert_eq!(payload.code, Some(0));
+        break;
+      }
+    }
+
+    sidecar.disarm();
+  }
+
   /// A minimal, real IPC invoke request for `cmd`, matching the shape
   /// the frontend's own `invoke()` sends over the actual `postMessage`
   /// pipeline this test drives through — not a direct Rust function

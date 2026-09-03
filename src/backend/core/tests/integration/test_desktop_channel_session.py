@@ -28,6 +28,7 @@ from corytm.runtime.desktop import serve_desktop_channel
 from corytm.runtime.transport import read_frame, write_frame
 
 _SAMPLE_RATE = 44100.0
+_TRANSPORT_FAILURE_ERRORS = (asyncio.IncompleteReadError, TimeoutError)
 
 
 class _CapturingStdout:
@@ -1059,3 +1060,118 @@ def test_stop_then_play_resumes_from_the_stopped_position() -> None:
             sys.stdin = original_stdin
 
     asyncio.run(asyncio.wait_for(_scenario(), timeout=30))
+
+
+@pytest.mark.transport
+def test_play_survives_a_real_human_idle_gap_before_it() -> None:
+    """Drives a real idle gap, past the playback process's own command
+    timeout, between Add Clip and Play over the real Desktop channel.
+
+    `corytm serve` is spawned here as a real, separate OS process
+    (matching `spawn_desktop_sidecar`'s own topology) rather than this
+    file's usual in-process `asyncio.create_task(serve_desktop_channel())`
+    pattern: only a genuinely separate process crashing closes the real
+    OS-level socket the way production does, which is what this test
+    needs to be able to detect. Mirrors the Rust-level test of the same
+    name, which drives the same path through the real `play` command.
+    """
+
+    async def _scenario() -> None:
+        process = await asyncio.create_subprocess_exec(
+            sys.executable,
+            "-m",
+            "corytm.main",
+            "serve",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            handshake_line = b""
+            while not handshake_line.startswith(b"DESKTOP "):
+                assert process.stdout is not None
+                handshake_line = await asyncio.wait_for(
+                    process.stdout.readline(), timeout=10
+                )
+                assert handshake_line, (
+                    "corytm serve exited before completing the handshake"
+                )
+
+            _, port_text, secret = handshake_line.decode().strip().split(" ")
+            port = int(port_text)
+
+            reader, writer = await asyncio.open_connection("127.0.0.1", port)
+            write_frame(writer, secret.encode("utf-8"))
+            await writer.drain()
+
+            created = await _exchange(
+                writer,
+                reader,
+                Command(create_project=CreateProjectCommand(schema_version=1)),
+            )
+            project_id = created.project_created.project_id
+
+            track_added = await _exchange(
+                writer,
+                reader,
+                Command(add_track=AddAudioTrackCommand(schema_version=1)),
+            )
+            track_id = track_added.track_added.track_id
+
+            clip_added = await _exchange(
+                writer,
+                reader,
+                Command(
+                    add_clip=AddAudioClipCommand(
+                        schema_version=1, track_id=track_id, duration_seconds=2.0
+                    )
+                ),
+            )
+
+            await asyncio.sleep(13.0)
+
+            project = ProjectMessage(
+                schema_version=1,
+                id=project_id,
+                tracks=[
+                    AudioTrackMessage(
+                        schema_version=1,
+                        id=track_id,
+                        clips=[
+                            AudioClipMessage(
+                                schema_version=1,
+                                id=clip_added.clip_added.clip_id,
+                                start_seconds=clip_added.clip_added.start_seconds,
+                                duration_seconds=clip_added.clip_added.duration_seconds,
+                            )
+                        ],
+                    )
+                ],
+            )
+
+            try:
+                started = await _exchange(
+                    writer,
+                    reader,
+                    Command(play=PlayCommand(schema_version=1, project=project)),
+                )
+            except _TRANSPORT_FAILURE_ERRORS:
+                assert process.stderr is not None
+                stderr = (await process.stderr.read()).decode(errors="replace")
+                pytest.fail(
+                    "Play failed after a real idle gap -- the persistent "
+                    "playback process likely gave up and exited on its own, "
+                    "crashing the whole corytm serve process. Its stderr:\n" + stderr
+                )
+
+            assert started.WhichOneof("event") == "playback_started"
+
+            await _exchange(writer, reader, Command(stop=StopCommand(schema_version=1)))
+
+            writer.close()
+            await writer.wait_closed()
+        finally:
+            if process.returncode is None:
+                process.kill()
+            await process.wait()
+
+    asyncio.run(asyncio.wait_for(_scenario(), timeout=45))

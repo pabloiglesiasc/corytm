@@ -40,7 +40,8 @@ namespace
 {
     constexpr juce::uint32 transportMagicNumber = 0x636f7274;
     constexpr int connectTimeoutMs = 5000;
-    constexpr int commandTimeoutMs = 5000;
+    constexpr int firstCommandTimeoutMs = 5000;
+    constexpr int subsequentCommandTimeoutMs = 24 * 60 * 60 * 1000;
     constexpr int playbackPollSliceMs = 10;
 
     struct HeadlessUIBehaviour : public UIBehaviour
@@ -140,31 +141,8 @@ namespace
         bool connectionWasLost = false;
     };
 
-    // While real-time playback is active, `TransportControl`'s queryable
-    // position is only kept current by periodic JUCE message-thread
-    // service — confirmed empirically: with the plain, unpumped
-    // `waitForCommand` wait below, `isPlaying()` correctly reports
-    // `true` but `getPlaybackPositionSeconds()` stays frozen at its
-    // starting value even seconds later, because real-time device audio
-    // itself runs on its own audio-callback thread, independent of the
-    // message thread. So the wait for the next command must become a
-    // short poll-and-pump loop for as long as a live Edit is playing,
-    // instead of the single long blocking wait used everywhere else,
-    // which would starve position tracking for the whole wait. This is
-    // also the authoritative layer for Corytm's own effective-end-of-
-    // content stop (see the in-loop check below): Tracktion's transport
-    // does not stop itself once an Edit's content ends — confirmed
-    // empirically, it keeps running past the end producing silence
-    // until told to stop — so relying on it alone would never satisfy
-    // Corytm's own product contract.
-    bool waitForNextCommand (NativeRuntimeConnection& connection, Edit* liveEdit, std::vector<std::byte>& commandBytesOut)
+    bool waitForNextCommand (NativeRuntimeConnection& connection, Edit* liveEdit, bool hasReceivedAnyCommand, std::vector<std::byte>& commandBytesOut)
     {
-        // Re-checks `isPlaying()` on every iteration, not just once at
-        // entry: playback can end (reaching its effective end, below)
-        // while this loop is waiting, and must fall through to the
-        // plain long wait once it does — otherwise this would poll-and-
-        // pump indefinitely against an Edit that already stopped, for
-        // as long as no further command happens to arrive.
         while (liveEdit != nullptr && isPlaying (*liveEdit))
         {
             if (connection.waitForCommand (playbackPollSliceMs, commandBytesOut))
@@ -184,7 +162,7 @@ namespace
             }
         }
 
-        return connection.waitForCommand (commandTimeoutMs, commandBytesOut);
+        return connection.waitForCommand (hasReceivedAnyCommand ? subsequentCommandTimeoutMs : firstCommandTimeoutMs, commandBytesOut);
     }
 }
 
@@ -215,20 +193,15 @@ int main (int argc, char* argv[])
 
     std::unique_ptr<Edit> liveEdit;
     std::string liveProjectId;
-    // The position Stop last captured, consumed (and reset) by the next
-    // Play against the same project id so it resumes from there rather
-    // than restarting at 0 — Play always rebuilds the Edit fresh (so it
-    // reflects any content changes made while stopped), so this is
-    // carried explicitly rather than relying on an old Edit surviving.
-    // Left at 0 after an effective-end auto-stop (see
-    // `waitForNextCommand`), since resuming "from the end" would just
-    // immediately re-trigger it.
     double lastStoppedPositionSeconds = 0.0;
     bool sessionSucceeded = true;
+    bool hasReceivedAnyCommand = false;
     std::vector<std::byte> commandBytes;
 
-    while (waitForNextCommand (connection, liveEdit.get(), commandBytes))
+    while (waitForNextCommand (connection, liveEdit.get(), hasReceivedAnyCommand, commandBytes))
     {
+        hasReceivedAnyCommand = true;
+
         const auto decoded = decodeCommand (commandBytes);
 
         if (! decoded)

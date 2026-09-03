@@ -391,6 +391,16 @@ def test_repeated_commands_with_idle_gaps_stay_reliable_over_one_connection() ->
     if modest, idle gap each time — guards against any reintroduced
     per-command read timeout as directly as the dedicated idle-gap
     test above, from a different angle (many small gaps, not one).
+
+    Each `move_clip` re-spawns a whole `native_runtime` process
+    (`materialize_then_move_clips`'s existing per-command shape, not
+    changed by this test), so ten iterations pay ten real process
+    spawns/device-manager inits/renders/teardowns, not ten cheap
+    round trips. The outer bound accounts for that against real,
+    measured cost (~25s locally) plus this project's own established
+    margin for CI running slower than local hardware for
+    native-adjacent work, not merely local dev timing — a real
+    macOS Actions run once exceeded a tighter 60s bound here.
     """
 
     async def _scenario() -> None:
@@ -437,7 +447,7 @@ def test_repeated_commands_with_idle_gaps_stay_reliable_over_one_connection() ->
             sys.stdout = original_stdout
             sys.stdin = original_stdin
 
-    asyncio.run(asyncio.wait_for(_scenario(), timeout=60))
+    asyncio.run(asyncio.wait_for(_scenario(), timeout=180))
 
 
 def test_session_survives_a_long_idle_gap_between_commands(

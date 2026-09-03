@@ -3,6 +3,7 @@ name = "corytm"
 version = "0.1.0"
 requires-python = ">=3.14.2"
 dependencies = [
+    "groq>=1.7.0",
     "protobuf>=7.36.1",
     "pydantic>=2.13.5",
 ]
@@ -24,7 +25,10 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests", "src/corytm"]
-markers = ["transport: cross-language proof requiring the native build to already exist (run via check-transport, not check-python)"]
+markers = [
+    "transport: cross-language proof requiring the native build to already exist (run via check-transport, not check-python)",
+    "live_llm: calls a real hosted model provider over the network; requires a real API key and is skipped automatically without one",
+]
 
 [tool.pyright]
 include = ["tests", "src"]

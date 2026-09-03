@@ -903,12 +903,29 @@ mod desktop_channel_tests {
   /// pipeline this test drives through — not a direct Rust function
   /// call, which bypasses ACL/capability resolution entirely (the
   /// gap that let `add_track`/`add_clip` ship without one).
+  ///
+  /// The request's `url` must match whatever Tauri's own ACL
+  /// evaluation (`Webview::is_local_url`) considers this platform's
+  /// local origin, confirmed against `tauri`'s own source
+  /// (`manager::tauri_protocol_url`): `tauri://localhost` on
+  /// macOS/Linux, but `https://tauri.localhost` on Windows, since
+  /// WebView2 cannot serve a bare custom URI scheme as an origin. A
+  /// hardcoded `tauri://localhost` here previously passed locally on
+  /// macOS by coincidence while failing every real IPC command as
+  /// "not allowed" under this app's own compiled-in capability on
+  /// Windows.
   fn invoke_request(cmd: &str, args: serde_json::Value) -> InvokeRequest {
+    let local_origin = if cfg!(windows) {
+      "https://tauri.localhost"
+    } else {
+      "tauri://localhost"
+    };
+
     InvokeRequest {
       cmd: cmd.into(),
       callback: CallbackFn(0),
       error: CallbackFn(1),
-      url: "tauri://localhost".parse().unwrap(),
+      url: local_origin.parse().unwrap(),
       body: tauri::ipc::InvokeBody::Json(args),
       headers: Default::default(),
       invoke_key: tauri::test::INVOKE_KEY.to_string(),

@@ -2,7 +2,7 @@ import asyncio
 
 import pytest
 
-from .transport import TRANSPORT_MAGIC, read_frame, write_frame
+from corytm.runtime.transport import TRANSPORT_MAGIC, read_frame, write_frame
 
 
 class _RecordingWriter:

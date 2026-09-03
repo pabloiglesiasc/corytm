@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-_CORE_PROJECT_DIRECTORY = Path(__file__).resolve().parents[1]
+_CORE_PROJECT_DIRECTORY = Path(__file__).resolve().parents[2]
 
 
 @pytest.mark.transport

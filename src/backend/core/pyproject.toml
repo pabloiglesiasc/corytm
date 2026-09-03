@@ -24,7 +24,7 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["tests", "src/corytm"]
+testpaths = ["tests"]
 markers = [
     "transport: cross-language proof requiring the native build to already exist (run via check-transport, not check-python)",
     "live_llm: calls a real hosted model provider over the network; requires a real API key and is skipped automatically without one",
@@ -44,6 +44,5 @@ extend-exclude = ["src/corytm/generated"]
 extend-select = ["D100", "D101", "D104"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/*" = ["D100", "D101", "D104"]
-"src/corytm/**/test_*.py" = ["D100", "D101", "D104"]
+"tests/**" = ["D100", "D101", "D104"]
 "sidecar_proof.py" = ["D100"]

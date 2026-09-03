@@ -3,10 +3,15 @@ from pathlib import Path
 
 import pytest
 
-from .clip import AudioClip
-from .persistence import SCHEMA_VERSION, ProjectFileError, load_project, save_project
-from .project import Project
-from .track import AudioTrack
+from corytm.engine.clip import AudioClip
+from corytm.engine.persistence import (
+    SCHEMA_VERSION,
+    ProjectFileError,
+    load_project,
+    save_project,
+)
+from corytm.engine.project import Project
+from corytm.engine.track import AudioTrack
 
 
 def _build_project() -> Project:

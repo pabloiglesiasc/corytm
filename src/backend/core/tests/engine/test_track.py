@@ -1,8 +1,8 @@
 import pytest
 from pydantic import ValidationError
 
-from .clip import AudioClip
-from .track import AudioTrack
+from corytm.engine.clip import AudioClip
+from corytm.engine.track import AudioTrack
 
 
 def test_constructs_with_clips() -> None:

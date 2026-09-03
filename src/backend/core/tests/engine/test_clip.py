@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from .clip import AudioClip
+from corytm.engine.clip import AudioClip
 
 
 def test_constructs_with_valid_fields() -> None:

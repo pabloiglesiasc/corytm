@@ -10,7 +10,7 @@ from corytm.runtime.transport import read_frame, write_frame
 
 
 def _transport_proof_executable() -> Path:
-    build_dir = Path(__file__).resolve().parents[3] / "backend" / "audio" / "build"
+    build_dir = Path(__file__).resolve().parents[4] / "backend" / "audio" / "build"
 
     if platform.system() == "Windows":
         return build_dir / "Release" / "transport_proof.exe"
